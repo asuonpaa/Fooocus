@@ -8,7 +8,7 @@ class AsyncTask:
 def progressbar(async_task, number, text):
     print(f'[Fooocus] {text}')
 
-def processTaskSimple(async_task, positive_cond, negative_cond):
+def processTaskSimple(async_task, positive_cond, negative_cond, seed, vary_image):
     # TODO Remove unused
     import traceback
     import math
@@ -46,21 +46,22 @@ def processTaskSimple(async_task, positive_cond, negative_cond):
     performance_selection = args.pop()
     aspect_ratios_selection = args.pop()
     image_number = args.pop()
-    image_seed = args.pop()
     sharpness = args.pop()
     guidance_scale = args.pop()
     base_model_name = args.pop()
     refiner_model_name = args.pop()
     refiner_switch = args.pop()
     loras = [[str(args.pop()), float(args.pop())] for _ in range(5)]
-    input_image_checkbox = args.pop()
-    current_tab = args.pop()
     uov_method = args.pop()
-    uov_input_image = args.pop()
     outpaint_selections = args.pop()
     inpaint_input_image = args.pop()
     inpaint_additional_prompt = args.pop()
     inpaint_mask_image_upload = args.pop()
+
+    if vary_image is not None:
+        uov_input_image = np.asarray(core.pytorch_to_numpy(vary_image[0]))
+    else:
+        uov_input_image = None
 
     cn_tasks = {x: [] for x in flags.ip_list}
     for _ in range(4):
@@ -147,7 +148,6 @@ def processTaskSimple(async_task, positive_cond, negative_cond):
     controlnet_cpds_path = None
     clip_vision_path, ip_negative_path, ip_adapter_path, ip_adapter_face_path = None, None, None, None
 
-    seed = int(image_seed)
     print(f'[Parameters] Seed = {seed}')
 
     sampler_name = advanced_parameters.sampler_name
@@ -156,65 +156,65 @@ def processTaskSimple(async_task, positive_cond, negative_cond):
     goals = []
     tasks = []
 
-    if input_image_checkbox:
-        if uov_input_image is not None:
-            uov_input_image = HWC3(uov_input_image)
-            goals.append('vary')
-#        if isinstance(inpaint_input_image, dict):
-#            inpaint_image = inpaint_input_image['image']
-#            inpaint_mask = inpaint_input_image['mask'][:, :, 0]
-#            
-#            if advanced_parameters.inpaint_mask_upload_checkbox:
-#                if isinstance(inpaint_mask_image_upload, np.ndarray):
-#                    if inpaint_mask_image_upload.ndim == 3:
-#                        H, W, C = inpaint_image.shape
-#                        inpaint_mask_image_upload = resample_image(inpaint_mask_image_upload, width=W, height=H)
-#                        inpaint_mask_image_upload = np.mean(inpaint_mask_image_upload, axis=2)
-#                        inpaint_mask_image_upload = (inpaint_mask_image_upload > 127).astype(np.uint8) * 255
-#                        inpaint_mask = np.maximum(inpaint_mask, inpaint_mask_image_upload)
+    if uov_input_image is not None:
+        uov_input_image = HWC3(uov_input_image)
+        goals.append('vary')
+
+#    if isinstance(inpaint_input_image, dict):
+#        inpaint_image = inpaint_input_image['image']
+#        inpaint_mask = inpaint_input_image['mask'][:, :, 0]
 #
-#            if int(advanced_parameters.inpaint_erode_or_dilate) != 0:
-#                inpaint_mask = erode_or_dilate(inpaint_mask, advanced_parameters.inpaint_erode_or_dilate)
+#        if advanced_parameters.inpaint_mask_upload_checkbox:
+#            if isinstance(inpaint_mask_image_upload, np.ndarray):
+#                if inpaint_mask_image_upload.ndim == 3:
+#                    H, W, C = inpaint_image.shape
+#                    inpaint_mask_image_upload = resample_image(inpaint_mask_image_upload, width=W, height=H)
+#                    inpaint_mask_image_upload = np.mean(inpaint_mask_image_upload, axis=2)
+#                    inpaint_mask_image_upload = (inpaint_mask_image_upload > 127).astype(np.uint8) * 255
+#                    inpaint_mask = np.maximum(inpaint_mask, inpaint_mask_image_upload)
 #
-#            if advanced_parameters.invert_mask_checkbox:
-#                inpaint_mask = 255 - inpaint_mask
+#        if int(advanced_parameters.inpaint_erode_or_dilate) != 0:
+#            inpaint_mask = erode_or_dilate(inpaint_mask, advanced_parameters.inpaint_erode_or_dilate)
 #
-#            inpaint_image = HWC3(inpaint_image)
-#            if isinstance(inpaint_image, np.ndarray) and isinstance(inpaint_mask, np.ndarray) \
-#                    and (np.any(inpaint_mask > 127) or len(outpaint_selections) > 0):
-#                progressbar(async_task, 1, 'Downloading upscale models ...')
-#                modules.config.downloading_upscale_model()
-#                if inpaint_parameterized:
-#                    progressbar(async_task, 1, 'Downloading inpainter ...')
-#                    inpaint_head_model_path, inpaint_patch_model_path = modules.config.downloading_inpaint_models(
-#                        advanced_parameters.inpaint_engine)
-#                    base_model_additional_loras += [(inpaint_patch_model_path, 1.0)]
-#                    print(f'[Inpaint] Current inpaint model is {inpaint_patch_model_path}')
-#                    if refiner_model_name == 'None':
-#                        use_synthetic_refiner = True
-#                        refiner_switch = 0.5
+#        if advanced_parameters.invert_mask_checkbox:
+#            inpaint_mask = 255 - inpaint_mask
+#
+#        inpaint_image = HWC3(inpaint_image)
+#        if isinstance(inpaint_image, np.ndarray) and isinstance(inpaint_mask, np.ndarray) \
+#                and (np.any(inpaint_mask > 127) or len(outpaint_selections) > 0):
+#            progressbar(async_task, 1, 'Downloading upscale models ...')
+#            modules.config.downloading_upscale_model()
+#            if inpaint_parameterized:
+#                progressbar(async_task, 1, 'Downloading inpainter ...')
+#                inpaint_head_model_path, inpaint_patch_model_path = modules.config.downloading_inpaint_models(
+#                    advanced_parameters.inpaint_engine)
+#                base_model_additional_loras += [(inpaint_patch_model_path, 1.0)]
+#                print(f'[Inpaint] Current inpaint model is {inpaint_patch_model_path}')
+#                if refiner_model_name == 'None':
+#                    use_synthetic_refiner = True
+#                    refiner_switch = 0.5
+#            else:
+#                inpaint_head_model_path, inpaint_patch_model_path = None, None
+#                print(f'[Inpaint] Parameterized inpaint is disabled.')
+#            if inpaint_additional_prompt != '':
+#                if prompt == '':
+#                    prompt = inpaint_additional_prompt
 #                else:
-#                    inpaint_head_model_path, inpaint_patch_model_path = None, None
-#                    print(f'[Inpaint] Parameterized inpaint is disabled.')
-#                if inpaint_additional_prompt != '':
-#                    if prompt == '':
-#                        prompt = inpaint_additional_prompt
-#                    else:
-#                        prompt = inpaint_additional_prompt + '\n' + prompt
-#                goals.append('inpaint')
-        if current_tab == 'ip':
-            goals.append('cn')
-            progressbar(async_task, 1, 'Downloading control models ...')
-            if len(cn_tasks[flags.cn_canny]) > 0:
-                controlnet_canny_path = modules.config.downloading_controlnet_canny()
-            if len(cn_tasks[flags.cn_cpds]) > 0:
-                controlnet_cpds_path = modules.config.downloading_controlnet_cpds()
-            if len(cn_tasks[flags.cn_ip]) > 0:
-                clip_vision_path, ip_negative_path, ip_adapter_path = modules.config.downloading_ip_adapters('ip')
-            if len(cn_tasks[flags.cn_ip_face]) > 0:
-                clip_vision_path, ip_negative_path, ip_adapter_face_path = modules.config.downloading_ip_adapters(
-                    'face')
-            progressbar(async_task, 1, 'Loading control models ...')
+#                    prompt = inpaint_additional_prompt + '\n' + prompt
+#            goals.append('inpaint')
+
+#    if current_tab == 'ip':
+#        goals.append('cn')
+#        progressbar(async_task, 1, 'Downloading control models ...')
+#        if len(cn_tasks[flags.cn_canny]) > 0:
+#            controlnet_canny_path = modules.config.downloading_controlnet_canny()
+#        if len(cn_tasks[flags.cn_cpds]) > 0:
+#            controlnet_cpds_path = modules.config.downloading_controlnet_cpds()
+#        if len(cn_tasks[flags.cn_ip]) > 0:
+#            clip_vision_path, ip_negative_path, ip_adapter_path = modules.config.downloading_ip_adapters('ip')
+#        if len(cn_tasks[flags.cn_ip_face]) > 0:
+#            clip_vision_path, ip_negative_path, ip_adapter_face_path = modules.config.downloading_ip_adapters(
+#                'face')
 
     # Load or unload CNs
     pipeline.refresh_controlnets([controlnet_canny_path, controlnet_cpds_path])
@@ -244,8 +244,6 @@ def processTaskSimple(async_task, positive_cond, negative_cond):
             denoising_strength = 0.5
         if 'strong' in uov_method:
             denoising_strength = 0.85
-        if advanced_parameters.overwrite_vary_strength > 0:
-            denoising_strength = advanced_parameters.overwrite_vary_strength
 
         shape_ceil = get_image_shape_ceil(uov_input_image)
         if shape_ceil < 1024:
@@ -1290,8 +1288,7 @@ class FooocusWrapper:
             "required": {
                 "positive": ("CONDITIONING",),
                 "negative": ("CONDITIONING",),
-                "seed": ("INT", {"default": 2661447138349841858, "min": 0, "max": 0xffffffffffffffff, "step": 1, "display": "number"})
-#                "image": ("IMAGE",),
+                "seed": ("INT", {"default": 2661447138349841858, "min": 0, "max": 0xffffffffffffffff, "step": 1, "display": "number"}),
 #                "int_field": ("INT", {
 #                    "default": 0,
 #                    "min": 0, #Minimum value
@@ -1312,6 +1309,9 @@ class FooocusWrapper:
 #                    "default": "Hello World!"
 #                }),
             },
+            "optional": {
+                "vary_image": ("IMAGE",),
+            }
         }
 
     RETURN_TYPES = ("IMAGE",)
@@ -1323,10 +1323,12 @@ class FooocusWrapper:
 
     CATEGORY = "Fooocus"
 
-    def process(self, positive, negative, seed):
+    def process(self, positive, negative, seed, vary_image = None):
         import modules.advanced_parameters as advanced_parameters
 
-        args = ['Speed', '896×1152', 1, str(seed), 2, 3, 'realisticStockPhoto_v10.safetensors', 'None', 0.5, 'SDXL_FILM_PHOTOGRAPHY_STYLE_BetaV0.4.safetensors', 0.25, 'None', 1, 'None', 1, 'None', 1, 'None', 1, False, 'uov', 'Disabled', None, [], None, '', None, None, 0.5, 0.6, 'ImagePrompt', None, 0.5, 0.6, 'ImagePrompt', None, 0.5, 0.6, 'ImagePrompt', None, 0.5, 0.6, 'ImagePrompt']
+#args = ['Speed', '896×1152', 1, 2, 3, 'realisticStockPhoto_v10.safetensors', 'None', 0.5, 'SDXL_FILM_PHOTOGRAPHY_STYLE_BetaV0.4.safetensors', 0.25, 'None', 1, 'None', 1, 'None', 1, 'None', 1, False, 'uov', 'Disabled', None, [], None, '', None, None, 0.5, 0.6, 'ImagePrompt', None, 0.5, 0.6, 'ImagePrompt', None, 0.5, 0.6, 'ImagePrompt', None, 0.5, 0.6, 'ImagePrompt']
+        args = ['Speed', '896×1152', 1, 2, 3, 'realisticStockPhoto_v10.safetensors', 'None', 0.5, 'SDXL_FILM_PHOTOGRAPHY_STYLE_BetaV0.4.safetensors', 0.25, 'None', 1, 'None', 1, 'None', 1, 'None', 1, 'Strong', [], None, '', None, None, 0.5, 0.6, 'ImagePrompt', None, 0.5, 0.6, 'ImagePrompt', None, 0.5, 0.6, 'ImagePrompt', None, 0.5, 0.6, 'ImagePrompt']
+
 
         adv_args = (False, 1.5, 0.8, 0.3, 7, 'dpmpp_2m_sde_gpu', 'karras', False, -1, -1, -1, -1, -1, -1, False, False, False, False, 0.25, 64, 128, 'joint', False, 1.01, 1.02, 0.99, 0.95, False, False, 'v2.6', 1, 0.618, False, False, 0)
 
@@ -1335,58 +1337,10 @@ class FooocusWrapper:
         #task = worker.AsyncTask(args=list(args))
         task = AsyncTask(args=list(args))
         
-        #image = processTask(task)
-        image = processTaskSimple(task, positive, negative)
+        image = processTaskSimple(task, positive, negative, seed, vary_image)
 
         return (image,)
 
-#    def test_old(self, image, string_field, int_field, float_field, print_to_screen):
-#        if print_to_screen == "enable":
-#            print(f"""Your input contains:
-#                string_field aka input text: {string_field}
-#                int_field: {int_field}
-#                float_field: {float_field}
-#            """)
-#        #do some processing on the image, in this example I just invert it
-#        image = 1.0 - image
-#
-#
-#        import time
-#        import modules.async_worker as worker
-#        import modules.advanced_parameters as advanced_parameters
-#        import modules.core as core
-#        import numpy as np
-#
-#
-#        args = ['a cat', 'unrealistic, saturated, high contrast, big nose, painting, drawing, sketch, cartoon, anime, manga, render, CG, 3d, watermark, signature, label', ['Fooocus V2', 'Fooocus Photograph', 'Fooocus Negative'], 'Speed', '896×1152 <span style="color: grey;"> ∣ 7:9</span>', 1, '2661447138349841858', 2, 3, 'realisticStockPhoto_v10.safetensors', 'None', 0.5, 'SDXL_FILM_PHOTOGRAPHY_STYLE_BetaV0.4.safetensors', 0.25, 'None', 1, 'None', 1, 'None', 1, 'None', 1, False, 'uov', 'Disabled', None, [], None, '', None, None, 0.5, 0.6, 'ImagePrompt', None, 0.5, 0.6, 'ImagePrompt', None, 0.5, 0.6, 'ImagePrompt', None, 0.5, 0.6, 'ImagePrompt']
-#
-#        adv_args = (False, 1.5, 0.8, 0.3, 7, 'dpmpp_2m_sde_gpu', 'karras', False, -1, -1, -1, -1, -1, -1, False, False, False, False, 0.25, 64, 128, 'joint', False, 1.01, 1.02, 0.99, 0.95, False, False, 'v2.6', 1, 0.618, False, False, 0)
-#
-#        advanced_parameters.set_all_advanced_parameters(*adv_args)
-#
-#        task = worker.AsyncTask(args=list(args))
-#        worker.async_tasks.append(task)
-#        finished = False
-#
-#        while not finished:
-#            time.sleep(0.01)
-#            if len(task.yields) > 0:
-#                flag, product = task.yields.pop(0)
-#                if flag == 'preview':
-#                    #print("preview")
-#                    pass
-#                if flag == 'results':
-#                    print("results")
-#                if flag == 'finish':
-#                    print("finish")
-#                    print(product)
-#                    print(image)
-#                    image = core.numpy_to_pytorch(np.array(product[0], dtype=np.ubyte))
-#                    print(image)
-#                    finished = True
-#
-#
-#        return (image,)
 
 class FooocusPrompt:
     def __init__(self):
