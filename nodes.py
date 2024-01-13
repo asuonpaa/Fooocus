@@ -4,10 +4,12 @@ class AsyncTask:
         self.yields = []
         self.results = []
 
-def processTaskSimple(async_task):
-    def progressbar(async_task, number, text):
-        print(f'[Fooocus] {text}')
+# TODO Remove
+def progressbar(async_task, number, text):
+    print(f'[Fooocus] {text}')
 
+def processTaskSimple(async_task, positive_cond, negative_cond):
+    # TODO Remove unused
     import traceback
     import math
     import numpy as np
@@ -41,9 +43,6 @@ def processTaskSimple(async_task):
     args = async_task.args
     args.reverse()
 
-    prompt = args.pop()
-    negative_prompt = args.pop()
-    style_selections = args.pop()
     performance_selection = args.pop()
     aspect_ratios_selection = args.pop()
     image_number = args.pop()
@@ -74,16 +73,7 @@ def processTaskSimple(async_task):
 
     outpaint_selections = [o.lower() for o in outpaint_selections]
     base_model_additional_loras = []
-    raw_style_selections = copy.deepcopy(style_selections)
     uov_method = uov_method.lower()
-
-    if fooocus_expansion in style_selections:
-        use_expansion = True
-        style_selections.remove(fooocus_expansion)
-    else:
-        use_expansion = False
-
-    use_style = len(style_selections) > 0
 
     if base_model_name == refiner_model_name:
         print(f'Refiner disabled because base model and refiner are same.')
@@ -143,7 +133,6 @@ def processTaskSimple(async_task):
     width, height = aspect_ratios_selection.replace('×', ' ').split(' ')[:2]
     width, height = int(width), int(height)
 
-    skip_prompt_processing = False
     refiner_swap_method = advanced_parameters.refiner_swap_method
 
     inpaint_worker.current_task = None
@@ -240,83 +229,10 @@ def processTaskSimple(async_task):
 
     progressbar(async_task, 1, 'Initializing ...')
 
-    # Prompt processing ------------------------------------------------------------------------------------
-
-    prompts = remove_empty_str([safe_str(p) for p in prompt.splitlines()], default='')
-    negative_prompts = remove_empty_str([safe_str(p) for p in negative_prompt.splitlines()], default='')
-
-    prompt = prompts[0]
-    negative_prompt = negative_prompts[0]
-
-    if prompt == '':
-        # disable expansion when empty since it is not meaningful and influences image prompt
-        use_expansion = False
-
-    extra_positive_prompts = prompts[1:] if len(prompts) > 1 else []
-    extra_negative_prompts = negative_prompts[1:] if len(negative_prompts) > 1 else []
-
     progressbar(async_task, 3, 'Loading models ...')
     pipeline.refresh_everything(refiner_model_name=refiner_model_name, base_model_name=base_model_name,
                                 loras=loras, base_model_additional_loras=base_model_additional_loras,
                                 use_synthetic_refiner=use_synthetic_refiner)
-
-    progressbar(async_task, 3, 'Processing prompts ...')
-
-    task_seed = seed
-    task_rng = random.Random(task_seed)  # may bind to inpaint noise in the future
-
-    task_prompt = apply_wildcards(prompt, task_rng)
-    task_negative_prompt = apply_wildcards(negative_prompt, task_rng)
-    task_extra_positive_prompts = [apply_wildcards(pmt, task_rng) for pmt in extra_positive_prompts]
-    task_extra_negative_prompts = [apply_wildcards(pmt, task_rng) for pmt in extra_negative_prompts]
-
-    positive_basic_workloads = []
-    negative_basic_workloads = []
-
-    if use_style:
-        for s in style_selections:
-            p, n = apply_style(s, positive=task_prompt)
-            positive_basic_workloads = positive_basic_workloads + p
-            negative_basic_workloads = negative_basic_workloads + n
-    else:
-        positive_basic_workloads.append(task_prompt)
-
-    negative_basic_workloads.append(task_negative_prompt)  # Always use independent workload for negative.
-
-    positive_basic_workloads = positive_basic_workloads + task_extra_positive_prompts
-    negative_basic_workloads = negative_basic_workloads + task_extra_negative_prompts
-
-    positive_basic_workloads = remove_empty_str(positive_basic_workloads, default=task_prompt)
-    negative_basic_workloads = remove_empty_str(negative_basic_workloads, default=task_negative_prompt)
-
-    # TODO: No need for dict
-    task = dict(
-        task_seed=task_seed,
-        task_prompt=task_prompt,
-        task_negative_prompt=task_negative_prompt,
-        positive=positive_basic_workloads,
-        negative=negative_basic_workloads,
-        expansion='',
-        c=None,
-        uc=None,
-        positive_top_k=len(positive_basic_workloads),
-        negative_top_k=len(negative_basic_workloads))
-
-    if use_expansion:
-        progressbar(async_task, 5, f'Preparing Fooocus text...')
-        expansion = pipeline.final_expansion(task['task_prompt'], task['task_seed'])
-        print(f'[Prompt Expansion] {expansion}')
-        task['expansion'] = expansion
-        task['positive'] = copy.deepcopy(task['positive']) + [expansion]  # Deep copy.
-
-    progressbar(async_task, 7, f'Encoding positive ...')
-    task['c'] = pipeline.clip_encode(texts=task['positive'], pool_top_k=task['positive_top_k'])
-
-    if abs(float(cfg_scale) - 1.0) < 1e-4:
-        task['uc'] = pipeline.clone_cond(task['c'])
-    else:
-        progressbar(async_task, 10, f'Encoding negative...')
-        task['uc'] = pipeline.clip_encode(texts=task['negative'], pool_top_k=task['negative_top_k'])
 
     # ----------------------------------------------------------------------------------------
 
@@ -513,8 +429,6 @@ def processTaskSimple(async_task):
             advanced_parameters.freeu_s2
         )
 
-    all_steps = steps * image_number
-
     print(f'[Parameters] Denoising Strength = {denoising_strength}')
 
     if isinstance(initial_latent, dict) and 'samples' in initial_latent:
@@ -553,8 +467,6 @@ def processTaskSimple(async_task):
 
     execution_start_time = time.perf_counter()
 
-    positive_cond, negative_cond = task['c'], task['uc']
-
     if 'cn' in goals:
         for cn_flag, cn_path in [
             (flags.cn_canny, controlnet_canny_path),
@@ -572,7 +484,7 @@ def processTaskSimple(async_task):
         switch=switch,
         width=width,
         height=height,
-        image_seed=task['task_seed'],
+        image_seed=seed,
         callback=callback,
         sampler_name=final_sampler_name,
         scheduler_name=final_scheduler_name,
@@ -582,9 +494,6 @@ def processTaskSimple(async_task):
         cfg_scale=cfg_scale,
         refiner_swap_method=refiner_swap_method
     )
-
-    # TODO: Not needed?
-    del task['c'], task['uc'], positive_cond, negative_cond  # Save memory
 
     if inpaint_worker.current_task is not None:
         imgs = [inpaint_worker.current_task.post_process(x) for x in imgs]
@@ -1379,42 +1288,45 @@ class FooocusWrapper:
         """
         return {
             "required": {
-                "image": ("IMAGE",),
-                "int_field": ("INT", {
-                    "default": 0, 
-                    "min": 0, #Minimum value
-                    "max": 4096, #Maximum value
-                    "step": 64, #Slider's step
-                    "display": "number" # Cosmetic only: display as "number" or "slider"
-                }),
-                "float_field": ("FLOAT", {
-                    "default": 1.0,
-                    "min": 0.0,
-                    "max": 10.0,
-                    "step": 0.01,
-                    "round": 0.001, #The value represeting the precision to round to, will be set to the step value by default. Can be set to False to disable rounding.
-                    "display": "number"}),
-                "print_to_screen": (["enable", "disable"],),
-                "string_field": ("STRING", {
-                    "multiline": False, #True if you want the field to look like the one on the ClipTextEncode node
-                    "default": "Hello World!"
-                }),
+                "positive": ("CONDITIONING",),
+                "negative": ("CONDITIONING",),
+                "seed": ("INT", {"default": 2661447138349841858, "min": 0, "max": 0xffffffffffffffff, "step": 1, "display": "number"})
+#                "image": ("IMAGE",),
+#                "int_field": ("INT", {
+#                    "default": 0,
+#                    "min": 0, #Minimum value
+#                    "max": 4096, #Maximum value
+#                    "step": 64, #Slider's step
+#                    "display": "number" # Cosmetic only: display as "number" or "slider"
+#                }),
+#                "float_field": ("FLOAT", {
+#                    "default": 1.0,
+#                    "min": 0.0,
+#                    "max": 10.0,
+#                    "step": 0.01,
+#                    "round": 0.001, #The value represeting the precision to round to, will be set to the step value by default. Can be set to False to disable rounding.
+#                    "display": "number"}),
+#                "print_to_screen": (["enable", "disable"],),
+#                "string_field": ("STRING", {
+#                    "multiline": False, #True if you want the field to look like the one on the ClipTextEncode node
+#                    "default": "Hello World!"
+#                }),
             },
         }
 
     RETURN_TYPES = ("IMAGE",)
     #RETURN_NAMES = ("image_output_name",)
 
-    FUNCTION = "test"
+    FUNCTION = "process"
 
     #OUTPUT_NODE = False
 
-    CATEGORY = "FooocusWrapper"
+    CATEGORY = "Fooocus"
 
-    def test(self, image, string_field, int_field, float_field, print_to_screen):
+    def process(self, positive, negative, seed):
         import modules.advanced_parameters as advanced_parameters
 
-        args = ['a cat', 'unrealistic, saturated, high contrast, big nose, painting, drawing, sketch, cartoon, anime, manga, render, CG, 3d, watermark, signature, label', ['Fooocus V2', 'Fooocus Photograph', 'Fooocus Negative'], 'Speed', '896×1152 <span style="color: grey;"> ∣ 7:9</span>', 1, '2661447138349841858', 2, 3, 'realisticStockPhoto_v10.safetensors', 'None', 0.5, 'SDXL_FILM_PHOTOGRAPHY_STYLE_BetaV0.4.safetensors', 0.25, 'None', 1, 'None', 1, 'None', 1, 'None', 1, False, 'uov', 'Disabled', None, [], None, '', None, None, 0.5, 0.6, 'ImagePrompt', None, 0.5, 0.6, 'ImagePrompt', None, 0.5, 0.6, 'ImagePrompt', None, 0.5, 0.6, 'ImagePrompt']
+        args = ['Speed', '896×1152', 1, str(seed), 2, 3, 'realisticStockPhoto_v10.safetensors', 'None', 0.5, 'SDXL_FILM_PHOTOGRAPHY_STYLE_BetaV0.4.safetensors', 0.25, 'None', 1, 'None', 1, 'None', 1, 'None', 1, False, 'uov', 'Disabled', None, [], None, '', None, None, 0.5, 0.6, 'ImagePrompt', None, 0.5, 0.6, 'ImagePrompt', None, 0.5, 0.6, 'ImagePrompt', None, 0.5, 0.6, 'ImagePrompt']
 
         adv_args = (False, 1.5, 0.8, 0.3, 7, 'dpmpp_2m_sde_gpu', 'karras', False, -1, -1, -1, -1, -1, -1, False, False, False, False, 0.25, 64, 128, 'joint', False, 1.01, 1.02, 0.99, 0.95, False, False, 'v2.6', 1, 0.618, False, False, 0)
 
@@ -1424,66 +1336,197 @@ class FooocusWrapper:
         task = AsyncTask(args=list(args))
         
         #image = processTask(task)
-        image = processTaskSimple(task)
+        image = processTaskSimple(task, positive, negative)
 
         return (image,)
 
-    def test_old(self, image, string_field, int_field, float_field, print_to_screen):
-        if print_to_screen == "enable":
-            print(f"""Your input contains:
-                string_field aka input text: {string_field}
-                int_field: {int_field}
-                float_field: {float_field}
-            """)
-        #do some processing on the image, in this example I just invert it
-        image = 1.0 - image
+#    def test_old(self, image, string_field, int_field, float_field, print_to_screen):
+#        if print_to_screen == "enable":
+#            print(f"""Your input contains:
+#                string_field aka input text: {string_field}
+#                int_field: {int_field}
+#                float_field: {float_field}
+#            """)
+#        #do some processing on the image, in this example I just invert it
+#        image = 1.0 - image
+#
+#
+#        import time
+#        import modules.async_worker as worker
+#        import modules.advanced_parameters as advanced_parameters
+#        import modules.core as core
+#        import numpy as np
+#
+#
+#        args = ['a cat', 'unrealistic, saturated, high contrast, big nose, painting, drawing, sketch, cartoon, anime, manga, render, CG, 3d, watermark, signature, label', ['Fooocus V2', 'Fooocus Photograph', 'Fooocus Negative'], 'Speed', '896×1152 <span style="color: grey;"> ∣ 7:9</span>', 1, '2661447138349841858', 2, 3, 'realisticStockPhoto_v10.safetensors', 'None', 0.5, 'SDXL_FILM_PHOTOGRAPHY_STYLE_BetaV0.4.safetensors', 0.25, 'None', 1, 'None', 1, 'None', 1, 'None', 1, False, 'uov', 'Disabled', None, [], None, '', None, None, 0.5, 0.6, 'ImagePrompt', None, 0.5, 0.6, 'ImagePrompt', None, 0.5, 0.6, 'ImagePrompt', None, 0.5, 0.6, 'ImagePrompt']
+#
+#        adv_args = (False, 1.5, 0.8, 0.3, 7, 'dpmpp_2m_sde_gpu', 'karras', False, -1, -1, -1, -1, -1, -1, False, False, False, False, 0.25, 64, 128, 'joint', False, 1.01, 1.02, 0.99, 0.95, False, False, 'v2.6', 1, 0.618, False, False, 0)
+#
+#        advanced_parameters.set_all_advanced_parameters(*adv_args)
+#
+#        task = worker.AsyncTask(args=list(args))
+#        worker.async_tasks.append(task)
+#        finished = False
+#
+#        while not finished:
+#            time.sleep(0.01)
+#            if len(task.yields) > 0:
+#                flag, product = task.yields.pop(0)
+#                if flag == 'preview':
+#                    #print("preview")
+#                    pass
+#                if flag == 'results':
+#                    print("results")
+#                if flag == 'finish':
+#                    print("finish")
+#                    print(product)
+#                    print(image)
+#                    image = core.numpy_to_pytorch(np.array(product[0], dtype=np.ubyte))
+#                    print(image)
+#                    finished = True
+#
+#
+#        return (image,)
+
+class FooocusPrompt:
+    def __init__(self):
+        pass
+
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "positive": ("STRING", {"multiline": True, "default": ""}),
+                "negative": ("STRING", {"multiline": True, "default": ""}),
+                "seed": ("INT", {"default": 0, "min": 0, "max": 0xffffffffffffffff, "step": 1, "display": "number"})
+            },
+        }
+
+    RETURN_TYPES = ("CONDITIONING", "CONDITIONING")
+    RETURN_NAMES = ("positive", "negative")
+
+    FUNCTION = "process"
+
+    #OUTPUT_NODE = False
+
+    CATEGORY = "Fooocus"
+
+    def process(self, positive, negative, seed):
+        import random
+        import copy
+        import modules.default_pipeline as pipeline
+
+        from modules.sdxl_styles import apply_style, apply_wildcards, fooocus_expansion
+        from extras.expansion import safe_str
+        from modules.util import remove_empty_str
+
+        prompts = remove_empty_str([safe_str(p) for p in positive.splitlines()], default='')
+        negative_prompts = remove_empty_str([safe_str(p) for p in negative.splitlines()], default='')
+
+        style_selections = ['Fooocus V2', 'Fooocus Photograph', 'Fooocus Negative']
+
+        if fooocus_expansion in style_selections:
+            use_expansion = True
+            style_selections.remove(fooocus_expansion)
+        else:
+            use_expansion = False
+
+        use_style = len(style_selections) > 0
+
+        prompt = prompts[0]
+        negative_prompt = negative_prompts[0]
+
+        if prompt == '':
+            # disable expansion when empty since it is not meaningful and influences image prompt
+            use_expansion = False
+
+        extra_positive_prompts = prompts[1:] if len(prompts) > 1 else []
+        extra_negative_prompts = negative_prompts[1:] if len(negative_prompts) > 1 else []
+
+#        print('Loading models ...')
+#        pipeline.refresh_everything(refiner_model_name=refiner_model_name, base_model_name=base_model_name,
+#                                    loras=loras, base_model_additional_loras=base_model_additional_loras,
+#                                    use_synthetic_refiner=use_synthetic_refiner)
+
+        print('Processing prompts ...')
+
+        task_seed = seed
+        task_rng = random.Random(task_seed)  # may bind to inpaint noise in the future
+
+        task_prompt = apply_wildcards(prompt, task_rng)
+        task_negative_prompt = apply_wildcards(negative_prompt, task_rng)
+        task_extra_positive_prompts = [apply_wildcards(pmt, task_rng) for pmt in extra_positive_prompts]
+        task_extra_negative_prompts = [apply_wildcards(pmt, task_rng) for pmt in extra_negative_prompts]
+
+        positive_basic_workloads = []
+        negative_basic_workloads = []
+
+        if use_style:
+            for s in style_selections:
+                p, n = apply_style(s, positive=task_prompt)
+                positive_basic_workloads = positive_basic_workloads + p
+                negative_basic_workloads = negative_basic_workloads + n
+        else:
+            positive_basic_workloads.append(task_prompt)
+
+        negative_basic_workloads.append(task_negative_prompt)  # Always use independent workload for negative.
+
+        positive_basic_workloads = positive_basic_workloads + task_extra_positive_prompts
+        negative_basic_workloads = negative_basic_workloads + task_extra_negative_prompts
+
+        positive_basic_workloads = remove_empty_str(positive_basic_workloads, default=task_prompt)
+        negative_basic_workloads = remove_empty_str(negative_basic_workloads, default=task_negative_prompt)
+
+        # TODO: No need for dict
+        task = dict(
+            task_seed=task_seed,
+            task_prompt=task_prompt,
+            task_negative_prompt=task_negative_prompt,
+            positive=positive_basic_workloads,
+            negative=negative_basic_workloads,
+            expansion='',
+            c=None,
+            uc=None,
+            positive_top_k=len(positive_basic_workloads),
+            negative_top_k=len(negative_basic_workloads))
+
+        if use_expansion:
+            print('Preparing Fooocus text...')
+            expansion = pipeline.final_expansion(task['task_prompt'], task['task_seed'])
+            print(f'[Prompt Expansion] {expansion}')
+            task['expansion'] = expansion
+            task['positive'] = copy.deepcopy(task['positive']) + [expansion]  # Deep copy.
+
+        # TODO
+        print("----------------------------------------------------------------------")
+        print(f"Positive: {task['positive']}")
+        print("----------------------------------------------------------------------")
+        print(f"Negative: {task['negative']}")
+        print("----------------------------------------------------------------------")
+        print(f"Positive top_k: {task['positive_top_k']}")
+        print("----------------------------------------------------------------------")
+        print(f"Negative top_k: {task['negative_top_k']}")
+        print("----------------------------------------------------------------------")
 
 
-        import time
-        import modules.async_worker as worker
-        import modules.advanced_parameters as advanced_parameters
-        import modules.core as core
-        import numpy as np
+        print('Encoding positive ...')
+        task['c'] = pipeline.clip_encode(texts=task['positive'], pool_top_k=task['positive_top_k'])
 
+        print(f'Encoding negative...')
+        task['uc'] = pipeline.clip_encode(texts=task['negative'], pool_top_k=task['negative_top_k'])
 
-        args = ['a cat', 'unrealistic, saturated, high contrast, big nose, painting, drawing, sketch, cartoon, anime, manga, render, CG, 3d, watermark, signature, label', ['Fooocus V2', 'Fooocus Photograph', 'Fooocus Negative'], 'Speed', '896×1152 <span style="color: grey;"> ∣ 7:9</span>', 1, '2661447138349841858', 2, 3, 'realisticStockPhoto_v10.safetensors', 'None', 0.5, 'SDXL_FILM_PHOTOGRAPHY_STYLE_BetaV0.4.safetensors', 0.25, 'None', 1, 'None', 1, 'None', 1, 'None', 1, False, 'uov', 'Disabled', None, [], None, '', None, None, 0.5, 0.6, 'ImagePrompt', None, 0.5, 0.6, 'ImagePrompt', None, 0.5, 0.6, 'ImagePrompt', None, 0.5, 0.6, 'ImagePrompt']
-
-        adv_args = (False, 1.5, 0.8, 0.3, 7, 'dpmpp_2m_sde_gpu', 'karras', False, -1, -1, -1, -1, -1, -1, False, False, False, False, 0.25, 64, 128, 'joint', False, 1.01, 1.02, 0.99, 0.95, False, False, 'v2.6', 1, 0.618, False, False, 0)
-
-        advanced_parameters.set_all_advanced_parameters(*adv_args)
-
-        task = worker.AsyncTask(args=list(args))
-        worker.async_tasks.append(task)
-        finished = False
-
-        while not finished:
-            time.sleep(0.01)
-            if len(task.yields) > 0:
-                flag, product = task.yields.pop(0)
-                if flag == 'preview':
-                    #print("preview")
-                    pass
-                if flag == 'results':
-                    print("results")
-                if flag == 'finish':
-                    print("finish")
-                    print(product)
-                    print(image)
-                    image = core.numpy_to_pytorch(np.array(product[0], dtype=np.ubyte))
-                    print(image)
-                    finished = True
-
-
-        return (image,)
+        return (task['c'], task['uc'])
 
 
 # A dictionary that contains all nodes you want to export with their names
 # NOTE: names should be globally unique
 NODE_CLASS_MAPPINGS = {
-    "FooocusWrapper": FooocusWrapper
+    "FooocusWrapper": FooocusWrapper,
+    "FooocusPrompt": FooocusPrompt
 }
 
 # A dictionary that contains the friendly/humanly readable titles for the nodes
 NODE_DISPLAY_NAME_MAPPINGS = {
-    "FooocusWrapper": "Fooocus Wrapper"
+    "FooocusWrapper": "Fooocus Wrapper",
+    "FooocusPrompt": "Fooocus Prompt"
 }
