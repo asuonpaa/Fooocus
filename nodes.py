@@ -1,3 +1,5 @@
+import comfy.utils
+
 class AsyncTask:
     def __init__(self, args):
         self.args = args
@@ -458,9 +460,6 @@ def processTaskSimple(async_task, positive_cond, negative_cond, seed, vary_image
 
     async_task.yields.append(['preview', (13, 'Moving model to GPU ...', None)])
 
-    def callback(step, x0, x, total_steps, y):
-        pass
-
 # -------------------------------------------------------------------
 
     execution_start_time = time.perf_counter()
@@ -474,6 +473,15 @@ def processTaskSimple(async_task, positive_cond, negative_cond, seed, vary_image
                 positive_cond, negative_cond = core.apply_controlnet(
                     positive_cond, negative_cond,
                     pipeline.loaded_ControlNets[cn_path], cn_img, cn_weight, 0, cn_stop)
+
+#    def callback(step, x0, x, total_steps, y):
+#        pass
+
+
+    pbar = comfy.utils.ProgressBar(steps)
+
+    def callback(step, x0, x, total_steps, y):
+        pbar.update_absolute(step)
 
     imgs = pipeline.process_diffusion(
         positive_cond=positive_cond,
@@ -1377,13 +1385,10 @@ class FooocusPrompt:
         prompts = remove_empty_str([safe_str(p) for p in positive.splitlines()], default='')
         negative_prompts = remove_empty_str([safe_str(p) for p in negative.splitlines()], default='')
 
-        style_selections = ['Fooocus V2', 'Fooocus Photograph', 'Fooocus Negative']
+        style_selections = ['Fooocus Photograph', 'Fooocus Negative']
 
-        if fooocus_expansion in style_selections:
-            use_expansion = True
-            style_selections.remove(fooocus_expansion)
-        else:
-            use_expansion = False
+        # TODO: Make an option
+        use_expansion = True
 
         use_style = len(style_selections) > 0
 
@@ -1431,45 +1436,34 @@ class FooocusPrompt:
         positive_basic_workloads = remove_empty_str(positive_basic_workloads, default=task_prompt)
         negative_basic_workloads = remove_empty_str(negative_basic_workloads, default=task_negative_prompt)
 
-        # TODO: No need for dict
-        task = dict(
-            task_seed=task_seed,
-            task_prompt=task_prompt,
-            task_negative_prompt=task_negative_prompt,
-            positive=positive_basic_workloads,
-            negative=negative_basic_workloads,
-            expansion='',
-            c=None,
-            uc=None,
-            positive_top_k=len(positive_basic_workloads),
-            negative_top_k=len(negative_basic_workloads))
+        positive_top_k=len(positive_basic_workloads)
+        negative_top_k=len(negative_basic_workloads)
 
         if use_expansion:
             print('Preparing Fooocus text...')
-            expansion = pipeline.final_expansion(task['task_prompt'], task['task_seed'])
+            # TODO: Does this load unnecessary diffusion model?
+            expansion = pipeline.final_expansion(task_prompt, task_seed)
             print(f'[Prompt Expansion] {expansion}')
-            task['expansion'] = expansion
-            task['positive'] = copy.deepcopy(task['positive']) + [expansion]  # Deep copy.
+            positive_basic_workloads = copy.deepcopy(positive_basic_workloads) + [expansion]  # Deep copy.
 
-        # TODO
-        print("----------------------------------------------------------------------")
-        print(f"Positive: {task['positive']}")
-        print("----------------------------------------------------------------------")
-        print(f"Negative: {task['negative']}")
-        print("----------------------------------------------------------------------")
-        print(f"Positive top_k: {task['positive_top_k']}")
-        print("----------------------------------------------------------------------")
-        print(f"Negative top_k: {task['negative_top_k']}")
-        print("----------------------------------------------------------------------")
+#        print("----------------------------------------------------------------------")
+#        print(f"Positive: {positive_basic_workloads}")
+#        print("----------------------------------------------------------------------")
+#        print(f"Negative: {negative_basic_workloads}")
+#        print("----------------------------------------------------------------------")
+#        print(f"Positive top_k: {positive_top_k}")
+#        print("----------------------------------------------------------------------")
+#        print(f"Negative top_k: {negative_top_k}")
+#        print("----------------------------------------------------------------------")
 
 
         print('Encoding positive ...')
-        task['c'] = pipeline.clip_encode(texts=task['positive'], pool_top_k=task['positive_top_k'])
+        cond_pos = pipeline.clip_encode(texts=positive_basic_workloads, pool_top_k=positive_top_k)
 
         print(f'Encoding negative...')
-        task['uc'] = pipeline.clip_encode(texts=task['negative'], pool_top_k=task['negative_top_k'])
+        cond_neg = pipeline.clip_encode(texts=negative_basic_workloads, pool_top_k=negative_top_k)
 
-        return (task['c'], task['uc'])
+        return (cond_pos, cond_neg)
 
 
 # A dictionary that contains all nodes you want to export with their names
