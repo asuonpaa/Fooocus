@@ -1,6 +1,7 @@
 import comfy.utils
 import folder_paths
 from modules.config import path_checkpoints, path_loras
+import copy
 
 folder_paths.folder_names_and_paths["fooocus_checkpoints"] = ([path_checkpoints], {".safetensors", ".ckpt"})
 folder_paths.folder_names_and_paths["fooocus_loras"] = ([path_loras], {".safetensors", ".ckpt"})
@@ -12,8 +13,14 @@ class AsyncTask:
         self.results = []
 
 def refresh_pipeline(pipeline, p):
+    import extras.ip_adapter as ip_adapter
+    print("Refreshing Fooocus pipeline")
     pipeline.refresh_everything(refiner_model_name=p["refiner"], base_model_name=p["base_model"],
             loras=p["loras"], base_model_additional_loras=p["additional_loras"], use_synthetic_refiner=p["use_synthetic_refiner"])
+    if p["ip_tasks"]:
+        print(f"Patching unet with {len(p['ip_tasks'])} ip-adapter tasks")
+        pipeline.final_unet = ip_adapter.patch_model(pipeline.final_unet, p["ip_tasks"])
+
 
 # TODO Remove
 def progressbar(async_task, number, text):
@@ -29,7 +36,6 @@ def processTaskSimple(async_task, pipeline_in, positive_cond, negative_cond, see
     import time
     import shared
     import random
-    import copy
     import modules.default_pipeline as pipeline
     import modules.core as core
     import modules.flags as flags
@@ -75,14 +81,14 @@ def processTaskSimple(async_task, pipeline_in, positive_cond, negative_cond, see
     else:
         uov_input_image = None
 
-    cn_tasks = {x: [] for x in flags.ip_list}
-    for _ in range(4):
-        cn_img = args.pop()
-        cn_stop = args.pop()
-        cn_weight = args.pop()
-        cn_type = args.pop()
-        if cn_img is not None:
-            cn_tasks[cn_type].append([cn_img, cn_stop, cn_weight])
+#    cn_tasks = {x: [] for x in flags.ip_list}
+#    for _ in range(4):
+#        cn_img = args.pop()
+#        cn_stop = args.pop()
+#        cn_weight = args.pop()
+#        cn_type = args.pop()
+#        if cn_img is not None:
+#            cn_tasks[cn_type].append([cn_img, cn_stop, cn_weight])
 
     outpaint_selections = [o.lower() for o in outpaint_selections]
     base_model_additional_loras = []
@@ -156,9 +162,9 @@ def processTaskSimple(async_task, pipeline_in, positive_cond, negative_cond, see
 
     use_synthetic_refiner = False
 
-    controlnet_canny_path = None
-    controlnet_cpds_path = None
-    clip_vision_path, ip_negative_path, ip_adapter_path, ip_adapter_face_path = None, None, None, None
+#    controlnet_canny_path = None
+#    controlnet_cpds_path = None
+#    clip_vision_path, ip_negative_path, ip_adapter_path, ip_adapter_face_path = None, None, None, None
 
     print(f'[Parameters] Seed = {seed}')
 
@@ -228,26 +234,16 @@ def processTaskSimple(async_task, pipeline_in, positive_cond, negative_cond, see
 #            clip_vision_path, ip_negative_path, ip_adapter_face_path = modules.config.downloading_ip_adapters(
 #                'face')
 
-    # Load or unload CNs
-    pipeline.refresh_controlnets([controlnet_canny_path, controlnet_cpds_path])
-    ip_adapter.load_ip_adapter(clip_vision_path, ip_negative_path, ip_adapter_path)
-    ip_adapter.load_ip_adapter(clip_vision_path, ip_negative_path, ip_adapter_face_path)
+#    # Load or unload CNs
+#    pipeline.refresh_controlnets([controlnet_canny_path, controlnet_cpds_path])
+#    ip_adapter.load_ip_adapter(clip_vision_path, ip_negative_path, ip_adapter_path)
+#    ip_adapter.load_ip_adapter(clip_vision_path, ip_negative_path, ip_adapter_face_path)
 
     # TODO Ari: Remove refiner?
     switch = int(round(steps * refiner_switch))
 
     print(f'[Parameters] Sampler = {sampler_name} - {scheduler_name}')
     print(f'[Parameters] Steps = {steps} - {switch}')
-
-    progressbar(async_task, 1, 'Initializing ...')
-
-    progressbar(async_task, 3, 'Loading models ...')
-
-    # TODO
-    print("----------------------------------------------------")
-    print(loras)
-    print(base_model_additional_loras)
-    print("----------------------------------------------------")
 
 #    pipeline.refresh_everything(refiner_model_name=refiner_model_name, base_model_name=base_model_name,
 #                                loras=loras, base_model_additional_loras=base_model_additional_loras,
@@ -400,61 +396,61 @@ def processTaskSimple(async_task, pipeline_in, positive_cond, negative_cond, see
 #        final_height, final_width = inpaint_worker.current_task.image.shape[:2]
 #        print(f'Final resolution is {str((final_height, final_width))}, latent is {str((height, width))}.')
 
-    if 'cn' in goals:
-        for task in cn_tasks[flags.cn_canny]:
-            cn_img, cn_stop, cn_weight = task
-            cn_img = resize_image(HWC3(cn_img), width=width, height=height)
-
-            if not advanced_parameters.skipping_cn_preprocessor:
-                cn_img = preprocessors.canny_pyramid(cn_img)
-
-            cn_img = HWC3(cn_img)
-            task[0] = core.numpy_to_pytorch(cn_img)
-            if advanced_parameters.debugging_cn_preprocessor:
-                yield_result(async_task, cn_img, do_not_show_finished_images=True)
-                return
-        for task in cn_tasks[flags.cn_cpds]:
-            cn_img, cn_stop, cn_weight = task
-            cn_img = resize_image(HWC3(cn_img), width=width, height=height)
-
-            if not advanced_parameters.skipping_cn_preprocessor:
-                cn_img = preprocessors.cpds(cn_img)
-
-            cn_img = HWC3(cn_img)
-            task[0] = core.numpy_to_pytorch(cn_img)
-            if advanced_parameters.debugging_cn_preprocessor:
-                yield_result(async_task, cn_img, do_not_show_finished_images=True)
-                return
-        for task in cn_tasks[flags.cn_ip]:
-            cn_img, cn_stop, cn_weight = task
-            cn_img = HWC3(cn_img)
-
-            # https://github.com/tencent-ailab/IP-Adapter/blob/d580c50a291566bbf9fc7ac0f760506607297e6d/README.md?plain=1#L75
-            cn_img = resize_image(cn_img, width=224, height=224, resize_mode=0)
-
-            task[0] = ip_adapter.preprocess(cn_img, ip_adapter_path=ip_adapter_path)
-            if advanced_parameters.debugging_cn_preprocessor:
-                yield_result(async_task, cn_img, do_not_show_finished_images=True)
-                return
-        for task in cn_tasks[flags.cn_ip_face]:
-            cn_img, cn_stop, cn_weight = task
-            cn_img = HWC3(cn_img)
-
-            if not advanced_parameters.skipping_cn_preprocessor:
-                cn_img = extras.face_crop.crop_image(cn_img)
-
-            # https://github.com/tencent-ailab/IP-Adapter/blob/d580c50a291566bbf9fc7ac0f760506607297e6d/README.md?plain=1#L75
-            cn_img = resize_image(cn_img, width=224, height=224, resize_mode=0)
-
-            task[0] = ip_adapter.preprocess(cn_img, ip_adapter_path=ip_adapter_face_path)
-            if advanced_parameters.debugging_cn_preprocessor:
-                yield_result(async_task, cn_img, do_not_show_finished_images=True)
-                return
-
-        all_ip_tasks = cn_tasks[flags.cn_ip] + cn_tasks[flags.cn_ip_face]
-
-        if len(all_ip_tasks) > 0:
-            pipeline.final_unet = ip_adapter.patch_model(pipeline.final_unet, all_ip_tasks)
+#    if 'cn' in goals:
+#        for task in cn_tasks[flags.cn_canny]:
+#            cn_img, cn_stop, cn_weight = task
+#            cn_img = resize_image(HWC3(cn_img), width=width, height=height)
+#
+#            if not advanced_parameters.skipping_cn_preprocessor:
+#                cn_img = preprocessors.canny_pyramid(cn_img)
+#
+#            cn_img = HWC3(cn_img)
+#            task[0] = core.numpy_to_pytorch(cn_img)
+#            if advanced_parameters.debugging_cn_preprocessor:
+#                yield_result(async_task, cn_img, do_not_show_finished_images=True)
+#                return
+#        for task in cn_tasks[flags.cn_cpds]:
+#            cn_img, cn_stop, cn_weight = task
+#            cn_img = resize_image(HWC3(cn_img), width=width, height=height)
+#
+#            if not advanced_parameters.skipping_cn_preprocessor:
+#                cn_img = preprocessors.cpds(cn_img)
+#
+#            cn_img = HWC3(cn_img)
+#            task[0] = core.numpy_to_pytorch(cn_img)
+#            if advanced_parameters.debugging_cn_preprocessor:
+#                yield_result(async_task, cn_img, do_not_show_finished_images=True)
+#                return
+#        for task in cn_tasks[flags.cn_ip]:
+#            cn_img, cn_stop, cn_weight = task
+#            cn_img = HWC3(cn_img)
+#
+#            # https://github.com/tencent-ailab/IP-Adapter/blob/d580c50a291566bbf9fc7ac0f760506607297e6d/README.md?plain=1#L75
+#            cn_img = resize_image(cn_img, width=224, height=224, resize_mode=0)
+#
+#            task[0] = ip_adapter.preprocess(cn_img, ip_adapter_path=ip_adapter_path)
+#            if advanced_parameters.debugging_cn_preprocessor:
+#                yield_result(async_task, cn_img, do_not_show_finished_images=True)
+#                return
+#        for task in cn_tasks[flags.cn_ip_face]:
+#            cn_img, cn_stop, cn_weight = task
+#            cn_img = HWC3(cn_img)
+#
+#            if not advanced_parameters.skipping_cn_preprocessor:
+#                cn_img = extras.face_crop.crop_image(cn_img)
+#
+#            # https://github.com/tencent-ailab/IP-Adapter/blob/d580c50a291566bbf9fc7ac0f760506607297e6d/README.md?plain=1#L75
+#            cn_img = resize_image(cn_img, width=224, height=224, resize_mode=0)
+#
+#            task[0] = ip_adapter.preprocess(cn_img, ip_adapter_path=ip_adapter_face_path)
+#            if advanced_parameters.debugging_cn_preprocessor:
+#                yield_result(async_task, cn_img, do_not_show_finished_images=True)
+#                return
+#
+#        all_ip_tasks = cn_tasks[flags.cn_ip] + cn_tasks[flags.cn_ip_face]
+#
+#        if len(all_ip_tasks) > 0:
+#            pipeline.final_unet = ip_adapter.patch_model(pipeline.final_unet, all_ip_tasks)
 
     if advanced_parameters.freeu_enabled:
         print(f'FreeU is enabled!')
@@ -636,12 +632,18 @@ class FooocusPrompt:
 
     def process(self, pipeline_in, positive, negative, seed):
         import random
-        import copy
         import modules.default_pipeline as pipeline
 
         from modules.sdxl_styles import apply_style, apply_wildcards, fooocus_expansion
         from extras.expansion import safe_str
         from modules.util import remove_empty_str
+
+        pipeline_out = copy.deepcopy(pipeline_in)
+
+        # TODO
+        print("------------------------------------")
+        print(f"[Fooocus Prompt]: got {len(pipeline_in['loras'])} loras and {len(pipeline_in['ip_tasks'])} ip-adapter tasks")
+        print("------------------------------------")
 
         prompts = remove_empty_str([safe_str(p) for p in positive.splitlines()], default='')
         negative_prompts = remove_empty_str([safe_str(p) for p in negative.splitlines()], default='')
@@ -667,7 +669,7 @@ class FooocusPrompt:
 #        pipeline.refresh_everything(refiner_model_name=refiner_model_name, base_model_name=base_model_name,
 #                                    loras=loras, base_model_additional_loras=base_model_additional_loras,
 #                                    use_synthetic_refiner=use_synthetic_refiner)
-        refresh_pipeline(pipeline, pipeline_in)
+#refresh_pipeline(pipeline, pipeline_in)
 
         print('Processing prompts ...')
 
@@ -725,7 +727,7 @@ class FooocusPrompt:
         print(f'Encoding negative...')
         cond_neg = pipeline.clip_encode(texts=negative_basic_workloads, pool_top_k=negative_top_k)
 
-        return (pipeline_in, cond_pos, cond_neg)
+        return (pipeline_out, cond_pos, cond_neg)
 
 # ----------------------------------------------------------------------------------------------------------
 
@@ -760,7 +762,7 @@ class FooocusPipelineLoader:
         print(ckpt_name)
         print("---------------------------------------------")
 #        pipeline.refresh_base_model(ckpt_name)
-        p = { "base_model": ckpt_name, "refiner": 'None', "loras": [], "additional_loras": [], "use_synthetic_refiner": False }
+        p = { "base_model": ckpt_name, "refiner": 'None', "loras": [], "additional_loras": [], "use_synthetic_refiner": False, "ip_tasks": [] }
         # TODO Ari
 #p["loras"] = [['SDXL_FILM_PHOTOGRAPHY_STYLE_BetaV0.4.safetensors', 0.25], ['None', 1.0], ['None', 1.0], ['None', 1.0], ['None', 1.0]]
 #        p["loras"] = [['SDXL_FILM_PHOTOGRAPHY_STYLE_BetaV0.4.safetensors', 0.25], ['None', 1.0], ['None', 1.0], ['None', 1.0], ['None', 1.0]]
@@ -803,10 +805,179 @@ class FooocusLoras:
 
     def process(self, pipeline_in, lora0, lora0_weight, lora1, lora1_weight, lora2, lora2_weight, lora3, lora3_weight):
         import modules.default_pipeline as pipeline
-        pipeline_in["loras"] = [[lora0, lora0_weight], [lora1, lora1_weight], [lora2, lora2_weight], [lora3, lora3_weight]]
-        refresh_pipeline(pipeline, pipeline_in)
 
-        return (pipeline_in, )
+        pipeline_out = copy.deepcopy(pipeline_in)
+
+        # TODO
+        print("------------------------------------")
+        print(f"[Fooocus Loras]: got {len(pipeline_in['loras'])} loras and {len(pipeline_in['ip_tasks'])} ip-adapter tasks")
+        print("------------------------------------")
+
+        pipeline_out["loras"] = [[lora0, lora0_weight], [lora1, lora1_weight], [lora2, lora2_weight], [lora3, lora3_weight]]
+        refresh_pipeline(pipeline, pipeline_out)
+
+        return (pipeline_out, )
+
+# ----------------------------------------------------------------------------------------------------------
+
+class FooocusImagePrompt:
+    def __init__(self):
+        pass
+
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "pipeline_in": ("FOOOCUS_PIPELINE", ),
+                "positive_in": ("CONDITIONING", ),
+                "negative_in": ("CONDITIONING", ),
+                "image_in": ("IMAGE", ),
+                "type": (["ImagePrompt", "PyraCanny", "CPDS", "FaceSwap"], ),
+                "stop_at": ("FLOAT", { "default": 0.5, "min": 0.0, "max": 1.0, "step": 0.01, "round": 0.001, "display": "number"}),
+                "weight": ("FLOAT", { "default": 0.6, "min": 0.0, "max": 2.0, "step": 0.01, "round": 0.001, "display": "number"}),
+            },
+        }
+
+    RETURN_TYPES = ("FOOOCUS_PIPELINE", "CONDITIONING", "CONDITIONING")
+    RETURN_NAMES = ("pipeline_out", "positive_out", "negative_out")
+
+    FUNCTION = "process"
+
+    #OUTPUT_NODE = False
+
+    CATEGORY = "Fooocus"
+
+    def process(self, pipeline_in, positive_in, negative_in, image_in, type, stop_at, weight):
+        import numpy as np
+        import modules.default_pipeline as pipeline
+        import modules.core as core
+        import modules.flags as flags
+        import modules.config
+        import extras.ip_adapter as ip_adapter
+        import extras.face_crop
+        from modules.util import HWC3, resize_image
+
+        pipeline_out = copy.deepcopy(pipeline_in)
+        positive_out = copy.deepcopy(positive_in)
+        negative_out = copy.deepcopy(negative_in)
+
+        # TODO
+        print("------------------------------------")
+        print(f"[Fooocus Image Prompt]: got {len(pipeline_in['loras'])} loras and {len(pipeline_in['ip_tasks'])} ip-adapter tasks")
+        print("------------------------------------")
+
+#    controlnet_canny_path = None
+#    controlnet_cpds_path = None
+#    clip_vision_path, ip_negative_path, ip_adapter_path, ip_adapter_face_path = None, None, None, None
+#    cn_tasks = {x: [] for x in flags.ip_list}
+
+#    if current_tab == 'ip':
+#        goals.append('cn')
+#        progressbar(async_task, 1, 'Downloading control models ...')
+#        if len(cn_tasks[flags.cn_canny]) > 0:
+#            controlnet_canny_path = modules.config.downloading_controlnet_canny()
+#        if len(cn_tasks[flags.cn_cpds]) > 0:
+#            controlnet_cpds_path = modules.config.downloading_controlnet_cpds()
+#        if len(cn_tasks[flags.cn_ip]) > 0:
+#            clip_vision_path, ip_negative_path, ip_adapter_path = modules.config.downloading_ip_adapters('ip')
+#        if len(cn_tasks[flags.cn_ip_face]) > 0:
+#            clip_vision_path, ip_negative_path, ip_adapter_face_path = modules.config.downloading_ip_adapters(
+#                'face')
+
+#    # Load or unload CNs
+#    pipeline.refresh_controlnets([controlnet_canny_path, controlnet_cpds_path])
+#    ip_adapter.load_ip_adapter(clip_vision_path, ip_negative_path, ip_adapter_path)
+#    ip_adapter.load_ip_adapter(clip_vision_path, ip_negative_path, ip_adapter_face_path)
+
+#    for _ in range(4):
+#        cn_img = args.pop()
+#        cn_stop = args.pop()
+#        cn_weight = args.pop()
+#        cn_type = args.pop()
+#        if cn_img is not None:
+#            cn_tasks[cn_type].append([cn_img, cn_stop, cn_weight])
+
+#    if 'cn' in goals:
+#        for task in cn_tasks[flags.cn_canny]:
+#            cn_img, cn_stop, cn_weight = task
+#            cn_img = resize_image(HWC3(cn_img), width=width, height=height)
+#
+#            if not advanced_parameters.skipping_cn_preprocessor:
+#                cn_img = preprocessors.canny_pyramid(cn_img)
+#
+#            cn_img = HWC3(cn_img)
+#            task[0] = core.numpy_to_pytorch(cn_img)
+#            if advanced_parameters.debugging_cn_preprocessor:
+#                yield_result(async_task, cn_img, do_not_show_finished_images=True)
+#                return
+#        for task in cn_tasks[flags.cn_cpds]:
+#            cn_img, cn_stop, cn_weight = task
+#            cn_img = resize_image(HWC3(cn_img), width=width, height=height)
+#
+#            if not advanced_parameters.skipping_cn_preprocessor:
+#                cn_img = preprocessors.cpds(cn_img)
+#
+#            cn_img = HWC3(cn_img)
+#            task[0] = core.numpy_to_pytorch(cn_img)
+#            if advanced_parameters.debugging_cn_preprocessor:
+#                yield_result(async_task, cn_img, do_not_show_finished_images=True)
+#                return
+#        for task in cn_tasks[flags.cn_ip]:
+#            cn_img, cn_stop, cn_weight = task
+#            cn_img = HWC3(cn_img)
+#
+#            # https://github.com/tencent-ailab/IP-Adapter/blob/d580c50a291566bbf9fc7ac0f760506607297e6d/README.md?plain=1#L75
+#            cn_img = resize_image(cn_img, width=224, height=224, resize_mode=0)
+#
+#            task[0] = ip_adapter.preprocess(cn_img, ip_adapter_path=ip_adapter_path)
+#            if advanced_parameters.debugging_cn_preprocessor:
+#                yield_result(async_task, cn_img, do_not_show_finished_images=True)
+#                return
+#        for task in cn_tasks[flags.cn_ip_face]:
+#            cn_img, cn_stop, cn_weight = task
+#            cn_img = HWC3(cn_img)
+#
+#            if not advanced_parameters.skipping_cn_preprocessor:
+#                cn_img = extras.face_crop.crop_image(cn_img)
+#
+#            # https://github.com/tencent-ailab/IP-Adapter/blob/d580c50a291566bbf9fc7ac0f760506607297e6d/README.md?plain=1#L75
+#            cn_img = resize_image(cn_img, width=224, height=224, resize_mode=0)
+#
+#            task[0] = ip_adapter.preprocess(cn_img, ip_adapter_path=ip_adapter_face_path)
+#            if advanced_parameters.debugging_cn_preprocessor:
+#                yield_result(async_task, cn_img, do_not_show_finished_images=True)
+#                return
+#
+#        all_ip_tasks = cn_tasks[flags.cn_ip] + cn_tasks[flags.cn_ip_face]
+#
+#        if len(all_ip_tasks) > 0:
+#            pipeline.final_unet = ip_adapter.patch_model(pipeline.final_unet, all_ip_tasks)
+        image = np.asarray(core.pytorch_to_numpy(image_in[0]))
+        image = HWC3(image)
+
+#        refresh_pipeline(pipeline, pipeline_in)
+
+        if type == "FaceSwap":
+            clip_vision_path, ip_negative_path, ip_adapter_face_path = modules.config.downloading_ip_adapters('face')
+            ip_adapter.load_ip_adapter(clip_vision_path, ip_negative_path, ip_adapter_face_path)
+
+            # TODO: Add setting for face cropping?
+#            if not advanced_parameters.skipping_cn_preprocessor:
+            image = extras.face_crop.crop_image(image)
+            image = resize_image(image, width=224, height=224, resize_mode=0)
+            image = ip_adapter.preprocess(image, ip_adapter_path=ip_adapter_face_path)
+            task = [image, stop_at, weight]
+            pipeline_out["ip_tasks"].append(task)
+        elif type == "ImagePrompt":
+            clip_vision_path, ip_negative_path, ip_adapter_path = modules.config.downloading_ip_adapters('ip')
+            ip_adapter.load_ip_adapter(clip_vision_path, ip_negative_path, ip_adapter_path)
+            image = resize_image(image, width=224, height=224, resize_mode=0)
+            image = ip_adapter.preprocess(image, ip_adapter_path=ip_adapter_path)
+            task = [image, stop_at, weight]
+            pipeline_out["ip_tasks"].append(task)
+
+
+        return (pipeline_out, positive_out, negative_out)
 
 # ----------------------------------------------------------------------------------------------------------
 
@@ -872,6 +1043,7 @@ NODE_CLASS_MAPPINGS = {
     "FooocusPrompt": FooocusPrompt,
     "FooocusPipelineLoader": FooocusPipelineLoader,
     "FooocusLoras": FooocusLoras,
+    "FooocusImagePrompt": FooocusImagePrompt,
     "FooocusRef": FooocusRef,
 }
 
@@ -881,5 +1053,6 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "FooocusPrompt": "Fooocus Prompt",
     "FooocusPipelineLoader": "Fooocus Pipeline Loader",
     "FooocusLoras": "Fooocus Loras",
+    "FooocusImagePrompt": "Fooocus Image Prompt",
     "FooocusRef": "Fooocus Ref",
 }
