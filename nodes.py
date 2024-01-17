@@ -280,13 +280,14 @@ def processTaskSimple(async_task, pipeline_in, positive_cond, negative_cond, see
         if 'strong' in uov_method:
             denoising_strength = 0.85
 
-        shape_ceil = get_image_shape_ceil(uov_input_image)
-        if shape_ceil < 1024:
-            print(f'[Vary] Image is resized because it is too small.')
-            shape_ceil = 1024
-        elif shape_ceil > 2048:
-            print(f'[Vary] Image is resized because it is too big.')
-            shape_ceil = 2048
+#        shape_ceil = get_image_shape_ceil(uov_input_image)
+#        if shape_ceil < 1024:
+#            print(f'[Vary] Image is resized because it is too small.')
+#            shape_ceil = 1024
+#        elif shape_ceil > 2048:
+#            print(f'[Vary] Image is resized because it is too big.')
+#            shape_ceil = 2048
+        shape_ceil = 1024
 
         uov_input_image = set_image_shape_ceil(uov_input_image, shape_ceil)
 
@@ -733,6 +734,11 @@ class FooocusPrompt:
 
 class FooocusPipelineLoader:
     def __init__(self):
+#        print("---------------------------------------------")
+#        comfy_checkpoints = folder_paths.get_full_path("checkpoints")
+#        print("---------------------------------------------")
+#        print(comfy_checkpoints)
+#        path_checkpoints = config.get_dir_or_set_default('path_checkpoints', comfy_checkpoints)
         pass
 
     @classmethod
@@ -753,14 +759,10 @@ class FooocusPipelineLoader:
     CATEGORY = "Fooocus"
 
     def process(self, ckpt_name):
-        # TODO
-        import modules.config
-        modules.config.default_base_model_name = ckpt_name
-        modules.config.default_loras = [['None', 1.0], ['None', 1.0], ['None', 1.0], ['None', 1.0], ['None', 1.0]]
+        import modules.config as config
+        config.default_base_model_name = ckpt_name
+        config.default_loras = [['None', 1.0], ['None', 1.0], ['None', 1.0], ['None', 1.0], ['None', 1.0]]
         import modules.default_pipeline as pipeline
-        print("---------------------------------------------")
-        print(ckpt_name)
-        print("---------------------------------------------")
 #        pipeline.refresh_base_model(ckpt_name)
         p = { "base_model": ckpt_name, "refiner": 'None', "loras": [], "additional_loras": [], "use_synthetic_refiner": False, "ip_tasks": [] }
         # TODO Ari
