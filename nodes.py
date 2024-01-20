@@ -21,6 +21,25 @@ def refresh_pipeline(pipeline, p):
         print(f"Patching unet with {len(p['ip_tasks'])} ip-adapter tasks")
         pipeline.final_unet = ip_adapter.patch_model(pipeline.final_unet, p["ip_tasks"])
 
+def preprocess_dwpose(image):
+    import modules.config as config
+    from extras.dwpose import DwposeDetector
+    import comfy.model_management as model_management
+    import modules.core as core
+
+    # TODO: Download models if not found?
+    model = DwposeDetector.from_pretrained(
+        config.path_controlnet,
+        config.path_controlnet,
+        det_filename="yolox_l.torchscript.pt", pose_filename="dw-ll_ucoco_384_bs5.torchscript.pt",
+        torchscript_device=model_management.get_torch_device()
+    )
+    image = model(image, output_type="np", detect_resolution=512, include_hand=True, include_face=True, include_body=True, image_and_json=False)
+    image = core.numpy_to_pytorch(image)
+    del model
+
+    return image
+
 
 # TODO Remove
 def progressbar(async_task, number, text):
@@ -837,7 +856,7 @@ class FooocusImagePrompt:
                 "positive_in": ("CONDITIONING", ),
                 "negative_in": ("CONDITIONING", ),
                 "image_in": ("IMAGE", ),
-                "type": (["ImagePrompt", "PyraCanny", "FaceSwap"], ),
+                "type": (["ImagePrompt", "PyraCanny", "FaceSwap", "DWPose"], ),
                 "stop_at": ("FLOAT", { "default": 0.5, "min": 0.0, "max": 1.0, "step": 0.01, "round": 0.001, "display": "number"}),
                 "weight": ("FLOAT", { "default": 0.6, "min": 0.0, "max": 2.0, "step": 0.01, "round": 0.001, "display": "number"}),
                 "softness": ("FLOAT", { "default": 0.25, "min": 0.0, "max": 1.0, "step": 0.01, "round": 0.001, "display": "number"}),
@@ -856,6 +875,7 @@ class FooocusImagePrompt:
     CATEGORY = "Fooocus"
 
     def process(self, pipeline_in, positive_in, negative_in, image_in, type, stop_at, weight, softness, threshold_low, threshold_high):
+        # TODO: Clean up imports
         import numpy as np
         import modules.default_pipeline as pipeline
         import modules.core as core
@@ -866,6 +886,7 @@ class FooocusImagePrompt:
         import extras.preprocessors as preprocessors
         from modules.util import HWC3, resize_image, set_image_shape_ceil
         import modules.advanced_parameters as advanced_parameters
+        import os
 
         pipeline_out = copy.deepcopy(pipeline_in)
         positive_out = copy.deepcopy(positive_in)
@@ -906,7 +927,6 @@ class FooocusImagePrompt:
             pipeline_out["ip_tasks"].append(task)
             image_out = image_in
         elif type == "PyraCanny":
-            # TODO: How to resize canny correctly?
             shape_ceil = 1024
             image = set_image_shape_ceil(image, shape_ceil)
             image = preprocessors.canny_pyramid(image)
@@ -916,9 +936,18 @@ class FooocusImagePrompt:
             pipeline.refresh_controlnets([controlnet_canny_path])
             positive_out, negative_out = core.apply_controlnet(positive_out, negative_out, pipeline.loaded_ControlNets[controlnet_canny_path], image, weight, 0, stop_at)
             image_out = image
+        elif type == "DWPose":
+            shape_ceil = 1024
+            # TODO: HWC3?
+            image = set_image_shape_ceil(image, shape_ceil)
+            image = preprocess_dwpose(image)
+            controlnet_openpose_path = os.path.join(modules.config.path_controlnet, 'control-lora-openposeXL2-rank256.safetensors')
+            pipeline.refresh_controlnets([controlnet_openpose_path])
+            positive_out, negative_out = core.apply_controlnet(positive_out, negative_out, pipeline.loaded_ControlNets[controlnet_openpose_path], image, weight, 0, stop_at)
+            image_out = image
 
 
-# TODO: Pyracanny thresholds as input
+# TODO: How to resize canny and DWPose correctly?
         return (pipeline_out, positive_out, negative_out, image_out)
 
 # ----------------------------------------------------------------------------------------------------------
