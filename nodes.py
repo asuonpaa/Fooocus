@@ -12,11 +12,11 @@ class AsyncTask:
         self.yields = []
         self.results = []
 
-def refresh_pipeline(pipeline, p):
+def refresh_pipeline(pipeline, p, additional_loras = [], use_synthetic_refiner = False):
     import extras.ip_adapter as ip_adapter
     print("Refreshing Fooocus pipeline")
     pipeline.refresh_everything(refiner_model_name=p["refiner"], base_model_name=p["base_model"],
-            loras=p["loras"], base_model_additional_loras=p["additional_loras"], use_synthetic_refiner=p["use_synthetic_refiner"])
+            loras=p["loras"], base_model_additional_loras=additional_loras, use_synthetic_refiner=use_synthetic_refiner)
     if p["ip_tasks"]:
         print(f"Patching unet with {len(p['ip_tasks'])} ip-adapter tasks")
         pipeline.final_unet = ip_adapter.patch_model(pipeline.final_unet, p["ip_tasks"])
@@ -45,7 +45,7 @@ def preprocess_dwpose(image):
 def progressbar(async_task, number, text):
     print(f'[Fooocus] {text}')
 
-def processTaskSimple(async_task, pipeline_in, positive_cond, negative_cond, seed, vary_image):
+def processTaskSimple(async_task, pipeline_in, positive_cond, negative_cond, seed, input_image, inpaint_mask_in):
     # TODO Remove unused
     import os
     import traceback
@@ -85,7 +85,6 @@ def processTaskSimple(async_task, pipeline_in, positive_cond, negative_cond, see
     image_number = args.pop()
     sharpness = args.pop()
     guidance_scale = args.pop()
-#    base_model_name = args.pop()
     refiner_model_name = args.pop()
     refiner_switch = args.pop()
     loras = [[str(args.pop()), float(args.pop())] for _ in range(5)]
@@ -95,10 +94,18 @@ def processTaskSimple(async_task, pipeline_in, positive_cond, negative_cond, see
     inpaint_additional_prompt = args.pop()
     inpaint_mask_image_upload = args.pop()
 
-    if vary_image is not None:
-        uov_input_image = np.asarray(core.pytorch_to_numpy(vary_image[0]))
+    # TODO: Combine uov_input_image and inpaint_image
+    if input_image is not None and inpaint_mask_in is None:
+        uov_input_image = np.asarray(core.pytorch_to_numpy(input_image[0]))
     else:
         uov_input_image = None
+
+    if input_image is not None and inpaint_mask_in is not None:
+        inpaint_image = np.asarray(core.pytorch_to_numpy(input_image[0]))
+        inpaint_mask = np.asarray(core.pytorch_to_numpy(inpaint_mask_in[0]))
+    else:
+        inpaint_image = None
+        inpaint_mask = None
 
 #    cn_tasks = {x: [] for x in flags.ip_list}
 #    for _ in range(4):
@@ -175,8 +182,8 @@ def processTaskSimple(async_task, pipeline_in, positive_cond, negative_cond, see
 
     inpaint_worker.current_task = None
     inpaint_parameterized = advanced_parameters.inpaint_engine != 'None'
-    inpaint_image = None
-    inpaint_mask = None
+#    inpaint_image = None
+#    inpaint_mask = None
     inpaint_head_model_path = None
 
     use_synthetic_refiner = False
@@ -240,6 +247,33 @@ def processTaskSimple(async_task, pipeline_in, positive_cond, negative_cond, see
 #                    prompt = inpaint_additional_prompt + '\n' + prompt
 #            goals.append('inpaint')
 
+
+    if inpaint_image is not None:
+
+        if int(advanced_parameters.inpaint_erode_or_dilate) != 0:
+            print(f'[Inpaint] Erode or dilate = {advanced_parameters.inpaint_erode_or_dilate}')
+            inpaint_mask = erode_or_dilate(inpaint_mask, advanced_parameters.inpaint_erode_or_dilate)
+
+        inpaint_image = HWC3(inpaint_image)
+
+        if isinstance(inpaint_image, np.ndarray) and isinstance(inpaint_mask, np.ndarray) \
+                and (np.any(inpaint_mask > 127) or len(outpaint_selections) > 0):
+            modules.config.downloading_upscale_model()
+            if inpaint_parameterized:
+                print('Downloading inpainter ...')
+                inpaint_head_model_path, inpaint_patch_model_path = modules.config.downloading_inpaint_models(
+                    advanced_parameters.inpaint_engine)
+                base_model_additional_loras += [(inpaint_patch_model_path, 1.0)]
+                print(f'[Inpaint] Current inpaint model is {inpaint_patch_model_path}')
+                if refiner_model_name == 'None':
+                    use_synthetic_refiner = True
+                    refiner_switch = 0.5
+            else:
+                inpaint_head_model_path, inpaint_patch_model_path = None, None
+                print(f'[Inpaint] Parameterized inpaint is disabled.')
+
+        goals.append('inpaint')
+
 #    if current_tab == 'ip':
 #        goals.append('cn')
 #        progressbar(async_task, 1, 'Downloading control models ...')
@@ -258,35 +292,13 @@ def processTaskSimple(async_task, pipeline_in, positive_cond, negative_cond, see
 #    ip_adapter.load_ip_adapter(clip_vision_path, ip_negative_path, ip_adapter_path)
 #    ip_adapter.load_ip_adapter(clip_vision_path, ip_negative_path, ip_adapter_face_path)
 
-    # TODO Ari: Remove refiner?
     switch = int(round(steps * refiner_switch))
 
     print(f'[Parameters] Sampler = {sampler_name} - {scheduler_name}')
     print(f'[Parameters] Steps = {steps} - {switch}')
 
-#    pipeline.refresh_everything(refiner_model_name=refiner_model_name, base_model_name=base_model_name,
-#                                loras=loras, base_model_additional_loras=base_model_additional_loras,
-#                                use_synthetic_refiner=use_synthetic_refiner)
 
-    # TODO: Remove
-#    pipeline.refresh_base_model("realisticStockPhoto_v10.safetensors")
-#    pipeline.refresh_everything(refiner_model_name=refiner_model_name, base_model_name="juggernautXL_v8Rundiffusion.safetensors",
-#                                loras=loras, base_model_additional_loras=base_model_additional_loras,
-#                                use_synthetic_refiner=use_synthetic_refiner)
-
-#    pipeline.refresh_loras(loras=loras, base_model_additional_loras=base_model_additional_loras)
-#    pipeline_in["loras"] = loras
-#    pipeline_in["additional_loras"] = base_model_additional_loras
-
-
-
-
-    refresh_pipeline(pipeline, pipeline_in)
-
-
-
-
-#    pipeline.refresh_loras(loras=loras, base_model_additional_loras=base_model_additional_loras)
+    refresh_pipeline(pipeline, pipeline_in, base_model_additional_loras, use_synthetic_refiner)
 
     # ----------------------------------------------------------------------------------------
 
@@ -326,7 +338,7 @@ def processTaskSimple(async_task, pipeline_in, positive_cond, negative_cond, see
         height = H * 8
         print(f'Final resolution is {str((height, width))}.')
 
-#    if 'inpaint' in goals:
+    if 'inpaint' in goals:
 #        if len(outpaint_selections) > 0:
 #            H, W, C = inpaint_image.shape
 #            if 'top' in outpaint_selections:
@@ -353,68 +365,73 @@ def processTaskSimple(async_task, pipeline_in, positive_cond, negative_cond, see
 #            advanced_parameters.inpaint_strength = 1.0
 #            advanced_parameters.inpaint_respective_field = 1.0
 #
-#        denoising_strength = advanced_parameters.inpaint_strength
-#
-#        inpaint_worker.current_task = inpaint_worker.InpaintWorker(
-#            image=inpaint_image,
-#            mask=inpaint_mask,
-#            use_fill=denoising_strength > 0.99,
-#            k=advanced_parameters.inpaint_respective_field
-#        )
-#
+        denoising_strength = advanced_parameters.inpaint_strength
+
+#        print("-----------------------------------------")
+#        print(f"SHAPE = {inpaint_image.shape}")
+#        print(f"IMAGE = {inpaint_image.shape}")
+#        print("-----------------------------------------")
+
+        inpaint_worker.current_task = inpaint_worker.InpaintWorker(
+            image=inpaint_image,
+            mask=inpaint_mask,
+            use_fill=denoising_strength > 0.99,
+            k=advanced_parameters.inpaint_respective_field
+        )
+
 #        if advanced_parameters.debugging_inpaint_preprocessor:
 #            yield_result(async_task, inpaint_worker.current_task.visualize_mask_processing(),
 #                         do_not_show_finished_images=True)
 #            return
-#
-#        progressbar(async_task, 13, 'VAE Inpaint encoding ...')
-#
-#        inpaint_pixel_fill = core.numpy_to_pytorch(inpaint_worker.current_task.interested_fill)
-#        inpaint_pixel_image = core.numpy_to_pytorch(inpaint_worker.current_task.interested_image)
-#        inpaint_pixel_mask = core.numpy_to_pytorch(inpaint_worker.current_task.interested_mask)
-#
-#        candidate_vae, candidate_vae_swap = pipeline.get_candidate_vae(
-#            steps=steps,
-#            switch=switch,
-#            denoise=denoising_strength,
-#            refiner_swap_method=refiner_swap_method
-#        )
-#
-#        latent_inpaint, latent_mask = core.encode_vae_inpaint(
-#            mask=inpaint_pixel_mask,
-#            vae=candidate_vae,
-#            pixels=inpaint_pixel_image)
-#
-#        latent_swap = None
-#        if candidate_vae_swap is not None:
-#            progressbar(async_task, 13, 'VAE SD15 encoding ...')
-#            latent_swap = core.encode_vae(
-#                vae=candidate_vae_swap,
-#                pixels=inpaint_pixel_fill)['samples']
-#
-#        progressbar(async_task, 13, 'VAE encoding ...')
-#        latent_fill = core.encode_vae(
-#            vae=candidate_vae,
-#            pixels=inpaint_pixel_fill)['samples']
-#
-#        inpaint_worker.current_task.load_latent(
-#            latent_fill=latent_fill, latent_mask=latent_mask, latent_swap=latent_swap)
-#
-#        if inpaint_parameterized:
-#            pipeline.final_unet = inpaint_worker.current_task.patch(
-#                inpaint_head_model_path=inpaint_head_model_path,
-#                inpaint_latent=latent_inpaint,
-#                inpaint_latent_mask=latent_mask,
-#                model=pipeline.final_unet
-#            )
-#
-#        if not advanced_parameters.inpaint_disable_initial_latent:
-#            initial_latent = {'samples': latent_fill}
-#
-#        B, C, H, W = latent_fill.shape
-#        height, width = H * 8, W * 8
-#        final_height, final_width = inpaint_worker.current_task.image.shape[:2]
-#        print(f'Final resolution is {str((final_height, final_width))}, latent is {str((height, width))}.')
+
+        print('VAE Inpaint encoding ...')
+
+        inpaint_pixel_fill = core.numpy_to_pytorch(inpaint_worker.current_task.interested_fill)
+        inpaint_pixel_image = core.numpy_to_pytorch(inpaint_worker.current_task.interested_image)
+        inpaint_pixel_mask = core.numpy_to_pytorch(inpaint_worker.current_task.interested_mask)
+
+        candidate_vae, candidate_vae_swap = pipeline.get_candidate_vae(
+            steps=steps,
+            switch=switch,
+            denoise=denoising_strength,
+            refiner_swap_method=refiner_swap_method
+        )
+
+        latent_inpaint, latent_mask = core.encode_vae_inpaint(
+            mask=inpaint_pixel_mask,
+            vae=candidate_vae,
+            pixels=inpaint_pixel_image)
+
+        latent_swap = None
+        if candidate_vae_swap is not None:
+            print('VAE SD15 encoding ...')
+            latent_swap = core.encode_vae(
+                vae=candidate_vae_swap,
+                pixels=inpaint_pixel_fill)['samples']
+
+        print('VAE encoding ...')
+        latent_fill = core.encode_vae(
+            vae=candidate_vae,
+            pixels=inpaint_pixel_fill)['samples']
+
+        inpaint_worker.current_task.load_latent(
+            latent_fill=latent_fill, latent_mask=latent_mask, latent_swap=latent_swap)
+
+        if inpaint_parameterized:
+            pipeline.final_unet = inpaint_worker.current_task.patch(
+                inpaint_head_model_path=inpaint_head_model_path,
+                inpaint_latent=latent_inpaint,
+                inpaint_latent_mask=latent_mask,
+                model=pipeline.final_unet
+            )
+
+        if not advanced_parameters.inpaint_disable_initial_latent:
+            initial_latent = {'samples': latent_fill}
+
+        B, C, H, W = latent_fill.shape
+        height, width = H * 8, W * 8
+        final_height, final_width = inpaint_worker.current_task.image.shape[:2]
+        print(f'Final resolution is {str((final_height, final_width))}, latent is {str((height, width))}.')
 
 #    if 'cn' in goals:
 #        for task in cn_tasks[flags.cn_canny]:
@@ -595,12 +612,13 @@ class FooocusWrapper:
 #                }),
             },
             "optional": {
-                "vary_image": ("IMAGE",),
+                "input_image": ("IMAGE",),
+                "inpaint_masks": ("MASK",),
             }
         }
 
-    RETURN_TYPES = ("IMAGE",)
-    #RETURN_NAMES = ("image_output_name",)
+    RETURN_TYPES = ("FOOOCUS_PIPELINE", "IMAGE")
+    RETURN_NAMES = ("pipeline_out", "image")
 
     FUNCTION = "process"
 
@@ -608,21 +626,33 @@ class FooocusWrapper:
 
     CATEGORY = "Fooocus"
 
-    def process(self, pipeline_in, positive, negative, seed, vary_image = None):
+    def process(self, pipeline_in, positive, negative, seed, input_image = None, inpaint_masks = []):
         import modules.advanced_parameters as advanced_parameters
 
 #        adv_args = (False, 1.5, 0.8, 0.3, 7, 'dpmpp_2m_sde_gpu', 'karras', False, -1, -1, -1, -1, -1, -1, False, False, False, False, 0.25, 64, 128, 'joint', False, 1.01, 1.02, 0.99, 0.95, False, False, 'v2.6', 1, 0.618, False, False, 0)
 #        advanced_parameters.set_all_advanced_parameters(*adv_args)
 
+        pipeline_out = copy.deepcopy(pipeline_in)
+
+        # TODO: Remove this
         args = ['Speed', '896×1152', 1, 2, 3, 'None', 0.5, 'SDXL_FILM_PHOTOGRAPHY_STYLE_BetaV0.4.safetensors', 0.25, 'None', 1, 'None', 1, 'None', 1, 'None', 1, 'Strong', [], None, '', None, None, 0.5, 0.6, 'ImagePrompt', None, 0.5, 0.6, 'ImagePrompt', None, 0.5, 0.6, 'ImagePrompt', None, 0.5, 0.6, 'ImagePrompt']
         task = AsyncTask(args=list(args))
-        image = processTaskSimple(task, pipeline_in, positive, negative, seed, vary_image)
+        if inpaint_masks is None and input_image is not None:
+            # Inpaint masks connected, but didn't receive any masks.
+            # --> Bypass the image without processing
+            print("[Foooocus Wrapper] Got an empty inpaint mask. Forwarding input image")
+            image = input_image
+        elif len(inpaint_masks) > 0:
+            # Inpainting
+            image = copy.deepcopy(input_image)
+            for mask in inpaint_masks:
+                # TODO: Remove this when getting rid of args
+                task = AsyncTask(args=list(args))
+                image = processTaskSimple(task, pipeline_in, positive, negative, seed, image, mask)
+        else:
+            image = processTaskSimple(task, pipeline_in, positive, negative, seed, input_image, None)
 
-#        args = ['a cat', 'unrealistic, saturated, high contrast, big nose, painting, drawing, sketch, cartoon, anime, manga, render, CG, 3d, watermark, signature, label', ['Fooocus V2', 'Fooocus Photograph', 'Fooocus Negative'], 'Speed', '896×1152 <span style="color: grey;"> ∣ 7:9</span>', 1, '0', 2, 3, 'juggernautXL_v8Rundiffusion.safetensors', 'None', 0.5, 'SDXL_FILM_PHOTOGRAPHY_STYLE_BetaV0.4.safetensors', 0.25, 'None', 1, 'None', 1, 'None', 1, 'None', 1, False, 'uov', 'Disabled', None, [], None, '', None, None, 0.5, 0.6, 'ImagePrompt', None, 0.5, 0.6, 'ImagePrompt', None, 0.5, 0.6, 'ImagePrompt', None, 0.5, 0.6, 'ImagePrompt']
-#        task = AsyncTask(args=list(args))
-#        image = processTask(task)
-
-        return (image,)
+        return (pipeline_out, image)
 
 # ----------------------------------------------------------------------------------------------------------
 
@@ -660,7 +690,6 @@ class FooocusPrompt:
 
         pipeline_out = copy.deepcopy(pipeline_in)
 
-        # TODO
         print("------------------------------------")
         print(f"[Fooocus Prompt]: got {len(pipeline_in['loras'])} loras and {len(pipeline_in['ip_tasks'])} ip-adapter tasks")
         print("------------------------------------")
@@ -747,6 +776,13 @@ class FooocusPrompt:
         print(f'Encoding negative...')
         cond_neg = pipeline.clip_encode(texts=negative_basic_workloads, pool_top_k=negative_top_k)
 
+        pipeline_out["prompt_pos"] = positive_basic_workloads
+        pipeline_out["prompt_neg"] = negative_basic_workloads
+
+        # TODO
+        print(pipeline_out["prompt_pos"])
+
+
         return (pipeline_out, cond_pos, cond_neg)
 
 # ----------------------------------------------------------------------------------------------------------
@@ -786,8 +822,8 @@ class FooocusPipelineLoader:
         config.default_loras = [['None', 1.0], ['None', 1.0], ['None', 1.0], ['None', 1.0], ['None', 1.0]]
         import modules.default_pipeline as pipeline
 #        pipeline.refresh_base_model(ckpt_name)
-        p = { "base_model": ckpt_name, "refiner": 'None', "loras": [], "additional_loras": [], "use_synthetic_refiner": False, "ip_tasks": [] }
-        # TODO Ari
+        p = { "base_model": ckpt_name, "refiner": 'None', "loras": [], "ip_tasks": [] }
+        # TODO
 #p["loras"] = [['SDXL_FILM_PHOTOGRAPHY_STYLE_BetaV0.4.safetensors', 0.25], ['None', 1.0], ['None', 1.0], ['None', 1.0], ['None', 1.0]]
 #        p["loras"] = [['SDXL_FILM_PHOTOGRAPHY_STYLE_BetaV0.4.safetensors', 0.25], ['None', 1.0], ['None', 1.0], ['None', 1.0], ['None', 1.0]]
         refresh_pipeline(pipeline, p)
@@ -856,7 +892,7 @@ class FooocusImagePrompt:
                 "positive_in": ("CONDITIONING", ),
                 "negative_in": ("CONDITIONING", ),
                 "image_in": ("IMAGE", ),
-                "type": (["ImagePrompt", "PyraCanny", "FaceSwap", "DWPose"], ),
+                "type": (["Disabled", "ImagePrompt", "PyraCanny", "FaceSwap", "DWPose"], ),
                 "stop_at": ("FLOAT", { "default": 0.5, "min": 0.0, "max": 1.0, "step": 0.01, "round": 0.001, "display": "number"}),
                 "weight": ("FLOAT", { "default": 0.6, "min": 0.0, "max": 2.0, "step": 0.01, "round": 0.001, "display": "number"}),
                 "softness": ("FLOAT", { "default": 0.25, "min": 0.0, "max": 1.0, "step": 0.01, "round": 0.001, "display": "number"}),
@@ -892,31 +928,40 @@ class FooocusImagePrompt:
         positive_out = copy.deepcopy(positive_in)
         negative_out = copy.deepcopy(negative_in)
 
-        # TODO
-        print("------------------------------------")
-        print(f"[Fooocus Image Prompt]: got {len(pipeline_in['loras'])} loras and {len(pipeline_in['ip_tasks'])} ip-adapter tasks")
-        print("------------------------------------")
+        #print("------------------------------------")
+        #print(f"[Fooocus Image Prompt]: got {len(pipeline_in['loras'])} loras and {len(pipeline_in['ip_tasks'])} ip-adapter tasks")
+        #print("------------------------------------")
 
         advanced_parameters.controlnet_softness = softness
         advanced_parameters.canny_low_threshold = threshold_low
         advanced_parameters.canny_high_threshold = threshold_high
 
         image = np.asarray(core.pytorch_to_numpy(image_in[0]))
+        image_out = image_in
 
         if type == "FaceSwap":
-            clip_vision_path, ip_negative_path, ip_adapter_face_path = modules.config.downloading_ip_adapters('face')
-            ip_adapter.load_ip_adapter(clip_vision_path, ip_negative_path, ip_adapter_face_path)
+            # Check if we want to disable the face swapping
+            disable_faceswap = False
+            if "prompt_pos" in pipeline_in:
+                many_faces = ("with a friend", "group of", "two", "three", "four")
+                for s in many_faces:
+                    if s in pipeline_in["prompt_pos"][0]:
+                        print(f"[Fooocus Image Prompt]: Matched prompt with multiple people. Disabling face swap.")
+                        disable_faceswap = True
+            if not disable_faceswap:
+                clip_vision_path, ip_negative_path, ip_adapter_face_path = modules.config.downloading_ip_adapters('face')
+                ip_adapter.load_ip_adapter(clip_vision_path, ip_negative_path, ip_adapter_face_path)
 
-            image = HWC3(image)
-            # TODO: Add setting for face cropping?
+                image = HWC3(image)
+                # TODO: Add setting for face cropping?
 #            if not advanced_parameters.skipping_cn_preprocessor:
-            image = extras.face_crop.crop_image(image)
-            image = resize_image(image, width=224, height=224, resize_mode=0)
-            image_out = copy.deepcopy(image)
-            image_out = core.numpy_to_pytorch(image_out)
-            image = ip_adapter.preprocess(image, ip_adapter_path=ip_adapter_face_path)
-            task = [image, stop_at, weight]
-            pipeline_out["ip_tasks"].append(task)
+                image = extras.face_crop.crop_image(image)
+                image = resize_image(image, width=224, height=224, resize_mode=0)
+                image_out = copy.deepcopy(image)
+                image_out = core.numpy_to_pytorch(image_out)
+                image = ip_adapter.preprocess(image, ip_adapter_path=ip_adapter_face_path)
+                task = [image, stop_at, weight]
+                pipeline_out["ip_tasks"].append(task)
         elif type == "ImagePrompt":
             clip_vision_path, ip_negative_path, ip_adapter_path = modules.config.downloading_ip_adapters('ip')
             ip_adapter.load_ip_adapter(clip_vision_path, ip_negative_path, ip_adapter_path)
@@ -952,7 +997,7 @@ class FooocusImagePrompt:
 
 # ----------------------------------------------------------------------------------------------------------
 
-class FooocusRef:
+class FooocusPipelineComponents:
     def __init__(self):
         pass
 
@@ -960,11 +1005,11 @@ class FooocusRef:
     def INPUT_TYPES(s):
         return {
             "required": {
-                "seed": ("INT", {"default": 2661447138349841858, "min": 0, "max": 0xffffffffffffffff, "step": 1, "display": "number"}),
+                "pipeline_in": ("FOOOCUS_PIPELINE", ),
             },
         }
 
-    RETURN_TYPES = ("IMAGE",)
+    RETURN_TYPES = ("MODEL", "CLIP", "VAE")
     #RETURN_NAMES = ("image_output_name",)
 
     FUNCTION = "process"
@@ -973,36 +1018,15 @@ class FooocusRef:
 
     CATEGORY = "Fooocus"
 
-    def process(self, seed):
-        import modules.advanced_parameters as advanced_parameters
-        import modules.async_worker as worker
-        import modules.core as core
-        import numpy as np
-        import time
+    def process(self, pipeline_in):
+        import modules.default_pipeline as pipeline
+#        import ldm_patched.modules.model_management
 
-        adv_args = (False, 1.5, 0.8, 0.3, 7, 'dpmpp_2m_sde_gpu', 'karras', False, -1, -1, -1, -1, -1, -1, False, False, False, False, 0.25, 64, 128, 'joint', False, 1.01, 1.02, 0.99, 0.95, False, False, 'v2.6', 1, 0.618, False, False, 0)
-        advanced_parameters.set_all_advanced_parameters(*adv_args)
+        refresh_pipeline(pipeline, pipeline_in)
 
-        args = ['a cat', 'unrealistic, saturated, high contrast, big nose, painting, drawing, sketch, cartoon, anime, manga, render, CG, 3d, watermark, signature, label', ['Fooocus V2', 'Fooocus Photograph', 'Fooocus Negative'], 'Speed', '896×1152 <span style="color: grey;"> ∣ 7:9</span>', 1, '0', 2, 3, 'juggernautXL_v8Rundiffusion.safetensors', 'None', 0.5, 'SDXL_FILM_PHOTOGRAPHY_STYLE_BetaV0.4.safetensors', 0.25, 'None', 1, 'None', 1, 'None', 1, 'None', 1, False, 'uov', 'Disabled', None, [], None, '', None, None, 0.5, 0.6, 'ImagePrompt', None, 0.5, 0.6, 'ImagePrompt', None, 0.5, 0.6, 'ImagePrompt', None, 0.5, 0.6, 'ImagePrompt']
+#        ldm_patched.modules.model_management.unload_all_models()
 
-        task = worker.AsyncTask(args=list(args))
-        worker.async_tasks.append(task)
-        finished = False
-
-        while not finished:
-            time.sleep(0.01)
-            if len(task.yields) > 0:
-                flag, product = task.yields.pop(0)
-                if flag == 'preview':
-                    pass
-                if flag == 'results':
-                    print("results")
-                if flag == 'finish':
-                    print("finish")
-                    image = core.numpy_to_pytorch(np.array(product[0], dtype=np.ubyte))
-                    finished = True
-
-        return (image,)
+        return (pipeline.final_unet, pipeline.final_clip, pipeline.final_vae)
 
 # ----------------------------------------------------------------------------------------------------------
 
@@ -1015,7 +1039,7 @@ NODE_CLASS_MAPPINGS = {
     "FooocusPipelineLoader": FooocusPipelineLoader,
     "FooocusLoras": FooocusLoras,
     "FooocusImagePrompt": FooocusImagePrompt,
-    "FooocusRef": FooocusRef,
+    "FooocusPipelineComponents": FooocusPipelineComponents,
 }
 
 # A dictionary that contains the friendly/humanly readable titles for the nodes
@@ -1025,5 +1049,5 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "FooocusPipelineLoader": "Fooocus Pipeline Loader",
     "FooocusLoras": "Fooocus Loras",
     "FooocusImagePrompt": "Fooocus Image Prompt",
-    "FooocusRef": "Fooocus Ref",
+    "FooocusPipelineComponents": "Fooocus Pipeline Components",
 }
