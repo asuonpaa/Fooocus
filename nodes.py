@@ -588,28 +588,6 @@ class FooocusWrapper:
         return {
             "required": {
                 "pipeline_in": ("FOOOCUS_PIPELINE", ),
-                "positive": ("CONDITIONING",),
-                "negative": ("CONDITIONING",),
-                "seed": ("INT", {"default": 2661447138349841858, "min": 0, "max": 0xffffffffffffffff, "step": 1, "display": "number"}),
-#                "int_field": ("INT", {
-#                    "default": 0,
-#                    "min": 0, #Minimum value
-#                    "max": 4096, #Maximum value
-#                    "step": 64, #Slider's step
-#                    "display": "number" # Cosmetic only: display as "number" or "slider"
-#                }),
-#                "float_field": ("FLOAT", {
-#                    "default": 1.0,
-#                    "min": 0.0,
-#                    "max": 10.0,
-#                    "step": 0.01,
-#                    "round": 0.001, #The value represeting the precision to round to, will be set to the step value by default. Can be set to False to disable rounding.
-#                    "display": "number"}),
-#                "print_to_screen": (["enable", "disable"],),
-#                "string_field": ("STRING", {
-#                    "multiline": False, #True if you want the field to look like the one on the ClipTextEncode node
-#                    "default": "Hello World!"
-#                }),
             },
             "optional": {
                 "input_image": ("IMAGE",),
@@ -626,13 +604,16 @@ class FooocusWrapper:
 
     CATEGORY = "Fooocus"
 
-    def process(self, pipeline_in, positive, negative, seed, input_image = None, inpaint_masks = []):
+    def process(self, pipeline_in, input_image = None, inpaint_masks = []):
         import modules.advanced_parameters as advanced_parameters
 
 #        adv_args = (False, 1.5, 0.8, 0.3, 7, 'dpmpp_2m_sde_gpu', 'karras', False, -1, -1, -1, -1, -1, -1, False, False, False, False, 0.25, 64, 128, 'joint', False, 1.01, 1.02, 0.99, 0.95, False, False, 'v2.6', 1, 0.618, False, False, 0)
 #        advanced_parameters.set_all_advanced_parameters(*adv_args)
 
         pipeline_out = copy.deepcopy(pipeline_in)
+        positive = pipeline_out["cond_pos"]
+        negative = pipeline_out["cond_neg"]
+        seed = pipeline_out["seed"]
 
         # TODO: Remove this
         args = ['Speed', '896×1152', 1, 2, 3, 'None', 0.5, 'SDXL_FILM_PHOTOGRAPHY_STYLE_BetaV0.4.safetensors', 0.25, 'None', 1, 'None', 1, 'None', 1, 'None', 1, 'Strong', [], None, '', None, None, 0.5, 0.6, 'ImagePrompt', None, 0.5, 0.6, 'ImagePrompt', None, 0.5, 0.6, 'ImagePrompt', None, 0.5, 0.6, 'ImagePrompt']
@@ -667,12 +648,11 @@ class FooocusPrompt:
                 "pipeline_in": ("FOOOCUS_PIPELINE", ),
                 "positive": ("STRING", {"multiline": True, "default": ""}),
                 "negative": ("STRING", {"multiline": True, "default": ""}),
-                "seed": ("INT", {"default": 0, "min": 0, "max": 0xffffffffffffffff, "step": 1, "display": "number"})
             },
         }
 
-    RETURN_TYPES = ("FOOOCUS_PIPELINE", "CONDITIONING", "CONDITIONING")
-    RETURN_NAMES = ("pipeline_out", "positive", "negative")
+    RETURN_TYPES = ("FOOOCUS_PIPELINE", )
+    RETURN_NAMES = ("pipeline_out", )
 
     FUNCTION = "process"
 
@@ -680,7 +660,7 @@ class FooocusPrompt:
 
     CATEGORY = "Fooocus"
 
-    def process(self, pipeline_in, positive, negative, seed):
+    def process(self, pipeline_in, positive, negative):
         import random
         import modules.default_pipeline as pipeline
 
@@ -689,6 +669,7 @@ class FooocusPrompt:
         from modules.util import remove_empty_str
 
         pipeline_out = copy.deepcopy(pipeline_in)
+        seed = pipeline_out["seed"]
 
         print("------------------------------------")
         print(f"[Fooocus Prompt]: got {len(pipeline_in['loras'])} loras and {len(pipeline_in['ip_tasks'])} ip-adapter tasks")
@@ -778,12 +759,15 @@ class FooocusPrompt:
 
         pipeline_out["prompt_pos"] = positive_basic_workloads
         pipeline_out["prompt_neg"] = negative_basic_workloads
+        pipeline_out["cond_pos"] = cond_pos
+        pipeline_out["cond_neg"] = cond_neg
+
 
         # TODO
         print(pipeline_out["prompt_pos"])
 
 
-        return (pipeline_out, cond_pos, cond_neg)
+        return (pipeline_out,)
 
 # ----------------------------------------------------------------------------------------------------------
 
@@ -822,7 +806,7 @@ class FooocusPipelineLoader:
         config.default_loras = [['None', 1.0], ['None', 1.0], ['None', 1.0], ['None', 1.0], ['None', 1.0]]
         import modules.default_pipeline as pipeline
 #        pipeline.refresh_base_model(ckpt_name)
-        p = { "base_model": ckpt_name, "refiner": 'None', "loras": [], "ip_tasks": [] }
+        p = { "base_model": ckpt_name, "refiner": 'None', "loras": [], "ip_tasks": [], "seed": 0 }
         # TODO
 #p["loras"] = [['SDXL_FILM_PHOTOGRAPHY_STYLE_BetaV0.4.safetensors', 0.25], ['None', 1.0], ['None', 1.0], ['None', 1.0], ['None', 1.0]]
 #        p["loras"] = [['SDXL_FILM_PHOTOGRAPHY_STYLE_BetaV0.4.safetensors', 0.25], ['None', 1.0], ['None', 1.0], ['None', 1.0], ['None', 1.0]]
@@ -889,8 +873,6 @@ class FooocusImagePrompt:
         return {
             "required": {
                 "pipeline_in": ("FOOOCUS_PIPELINE", ),
-                "positive_in": ("CONDITIONING", ),
-                "negative_in": ("CONDITIONING", ),
                 "image_in": ("IMAGE", ),
                 "type": (["Disabled", "ImagePrompt", "PyraCanny", "FaceSwap", "DWPose"], ),
                 "stop_at": ("FLOAT", { "default": 0.5, "min": 0.0, "max": 1.0, "step": 0.01, "round": 0.001, "display": "number"}),
@@ -901,8 +883,8 @@ class FooocusImagePrompt:
             },
         }
 
-    RETURN_TYPES = ("FOOOCUS_PIPELINE", "CONDITIONING", "CONDITIONING", "IMAGE")
-    RETURN_NAMES = ("pipeline_out", "positive_out", "negative_out", "preprocessed")
+    RETURN_TYPES = ("FOOOCUS_PIPELINE", "IMAGE")
+    RETURN_NAMES = ("pipeline_out", "preprocessed")
 
     FUNCTION = "process"
 
@@ -910,7 +892,7 @@ class FooocusImagePrompt:
 
     CATEGORY = "Fooocus"
 
-    def process(self, pipeline_in, positive_in, negative_in, image_in, type, stop_at, weight, softness, threshold_low, threshold_high):
+    def process(self, pipeline_in, image_in, type, stop_at, weight, softness, threshold_low, threshold_high):
         # TODO: Clean up imports
         import numpy as np
         import modules.default_pipeline as pipeline
@@ -925,8 +907,8 @@ class FooocusImagePrompt:
         import os
 
         pipeline_out = copy.deepcopy(pipeline_in)
-        positive_out = copy.deepcopy(positive_in)
-        negative_out = copy.deepcopy(negative_in)
+        positive_out = pipeline_out["cond_pos"]
+        negative_out = pipeline_out["cond_neg"]
 
         #print("------------------------------------")
         #print(f"[Fooocus Image Prompt]: got {len(pipeline_in['loras'])} loras and {len(pipeline_in['ip_tasks'])} ip-adapter tasks")
@@ -979,7 +961,7 @@ class FooocusImagePrompt:
             image = core.numpy_to_pytorch(image)
             controlnet_canny_path = modules.config.downloading_controlnet_canny()
             pipeline.refresh_controlnets([controlnet_canny_path])
-            positive_out, negative_out = core.apply_controlnet(positive_out, negative_out, pipeline.loaded_ControlNets[controlnet_canny_path], image, weight, 0, stop_at)
+            pipeline_out["cond_pos"], pipeline_out["cond_neg"] = core.apply_controlnet(pipeline_in["cond_pos"], pipeline_in["cond_neg"], pipeline.loaded_ControlNets[controlnet_canny_path], image, weight, 0, stop_at)
             image_out = image
         elif type == "DWPose":
             shape_ceil = 1024
@@ -988,12 +970,12 @@ class FooocusImagePrompt:
             image = preprocess_dwpose(image)
             controlnet_openpose_path = os.path.join(modules.config.path_controlnet, 'control-lora-openposeXL2-rank256.safetensors')
             pipeline.refresh_controlnets([controlnet_openpose_path])
-            positive_out, negative_out = core.apply_controlnet(positive_out, negative_out, pipeline.loaded_ControlNets[controlnet_openpose_path], image, weight, 0, stop_at)
+            pipeline_out["cond_pos"], pipeline_out["cond_neg"] = core.apply_controlnet(pipeline_in["cond_pos"], pipeline_in["cond_neg"], pipeline.loaded_ControlNets[controlnet_openpose_path], image, weight, 0, stop_at)
             image_out = image
 
 
 # TODO: How to resize canny and DWPose correctly?
-        return (pipeline_out, positive_out, negative_out, image_out)
+        return (pipeline_out, image_out)
 
 # ----------------------------------------------------------------------------------------------------------
 
@@ -1030,6 +1012,36 @@ class FooocusPipelineComponents:
 
 # ----------------------------------------------------------------------------------------------------------
 
+class FooocusPipelineSettings:
+    def __init__(self):
+        pass
+
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "pipeline_in": ("FOOOCUS_PIPELINE", ),
+                "seed": ("INT", {"default": 0, "min": 0, "max": 0xffffffffffffffff, "step": 1, "display": "number"}),
+            },
+        }
+
+    RETURN_TYPES = ("FOOOCUS_PIPELINE", )
+    RETURN_NAMES = ("pipeline_out",)
+
+    FUNCTION = "process"
+
+    #OUTPUT_NODE = False
+
+    CATEGORY = "Fooocus"
+
+    def process(self, pipeline_in, seed):
+        pipeline_out = copy.deepcopy(pipeline_in)
+        pipeline_out["seed"] = seed
+
+        return (pipeline_out, )
+
+# ----------------------------------------------------------------------------------------------------------
+
 
 # A dictionary that contains all nodes you want to export with their names
 # NOTE: names should be globally unique
@@ -1040,6 +1052,7 @@ NODE_CLASS_MAPPINGS = {
     "FooocusLoras": FooocusLoras,
     "FooocusImagePrompt": FooocusImagePrompt,
     "FooocusPipelineComponents": FooocusPipelineComponents,
+    "FooocusPipelineSettings": FooocusPipelineSettings,
 }
 
 # A dictionary that contains the friendly/humanly readable titles for the nodes
@@ -1050,4 +1063,5 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "FooocusLoras": "Fooocus Loras",
     "FooocusImagePrompt": "Fooocus Image Prompt",
     "FooocusPipelineComponents": "Fooocus Pipeline Components",
+    "FooocusPipelineSettings": "Fooocus Pipeline Settings",
 }
