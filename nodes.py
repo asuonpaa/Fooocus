@@ -188,10 +188,11 @@ def processTaskSimple(async_task, pipeline_in, positive_cond, negative_cond, see
     # inpaint_strength = 1
     #
     # Here we set detailer settings
-    advanced_parameters.inpaint_engine = 'None'
+    inpaint_settings = pipeline_in["inpaint_settings"]
+    advanced_parameters.inpaint_engine = inpaint_settings["engine"]
     advanced_parameters.erode_or_dilate = 0
-    advanced_parameters.inpaint_respective_field = 0.0
-    advanced_parameters.inpaint_strength = 0.5
+    advanced_parameters.inpaint_respective_field = inpaint_settings["respective_field"]
+    advanced_parameters.inpaint_strength = inpaint_settings["strength"]
 
     inpaint_worker.current_task = None
     inpaint_parameterized = advanced_parameters.inpaint_engine != 'None'
@@ -819,7 +820,8 @@ class FooocusPipelineLoader:
         config.default_loras = [['None', 1.0], ['None', 1.0], ['None', 1.0], ['None', 1.0], ['None', 1.0]]
         import modules.default_pipeline as pipeline
 #        pipeline.refresh_base_model(ckpt_name)
-        p = { "base_model": ckpt_name, "refiner": 'None', "loras": [], "ip_tasks": [], "seed": 0 }
+        inpaint_settings = {"engine": "v2.6", "respective_field": 0.618, "strength": 1.0}
+        p = { "base_model": ckpt_name, "refiner": 'None', "loras": [], "ip_tasks": [], "seed": 0, "inpaint_settings": inpaint_settings }
         # TODO
 #p["loras"] = [['SDXL_FILM_PHOTOGRAPHY_STYLE_BetaV0.4.safetensors', 0.25], ['None', 1.0], ['None', 1.0], ['None', 1.0], ['None', 1.0]]
 #        p["loras"] = [['SDXL_FILM_PHOTOGRAPHY_STYLE_BetaV0.4.safetensors', 0.25], ['None', 1.0], ['None', 1.0], ['None', 1.0], ['None', 1.0]]
@@ -1055,6 +1057,39 @@ class FooocusPipelineSettings:
 
 # ----------------------------------------------------------------------------------------------------------
 
+class FooocusInpaintSettings:
+    def __init__(self):
+        pass
+
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "pipeline_in": ("FOOOCUS_PIPELINE", ),
+                "engine": (["None", "v2.6"], ),
+                "respective_field": ("FLOAT", { "default": 0.3, "min": 0.0, "max": 1.0, "step": 0.01, "round": 0.001, "display": "number"}),
+                "strength": ("FLOAT", { "default": 0.35, "min": 0.0, "max": 1.0, "step": 0.01, "round": 0.001, "display": "number"}),
+            },
+        }
+
+    RETURN_TYPES = ("FOOOCUS_PIPELINE", )
+    RETURN_NAMES = ("pipeline_out",)
+
+    FUNCTION = "process"
+
+    #OUTPUT_NODE = False
+
+    CATEGORY = "Fooocus"
+
+    def process(self, pipeline_in, engine, respective_field, strength):
+        pipeline_out = copy.deepcopy(pipeline_in)
+        inpaint_settings = {"engine": engine, "respective_field": respective_field, "strength": strength}
+        pipeline_out["inpaint_settings"] = inpaint_settings
+
+        return (pipeline_out, )
+
+# ----------------------------------------------------------------------------------------------------------
+
 
 # A dictionary that contains all nodes you want to export with their names
 # NOTE: names should be globally unique
@@ -1066,6 +1101,7 @@ NODE_CLASS_MAPPINGS = {
     "FooocusImagePrompt": FooocusImagePrompt,
     "FooocusPipelineComponents": FooocusPipelineComponents,
     "FooocusPipelineSettings": FooocusPipelineSettings,
+    "FooocusInpaintSettings": FooocusInpaintSettings,
 }
 
 # A dictionary that contains the friendly/humanly readable titles for the nodes
@@ -1077,4 +1113,5 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "FooocusImagePrompt": "Fooocus Image Prompt",
     "FooocusPipelineComponents": "Fooocus Pipeline Components",
     "FooocusPipelineSettings": "Fooocus Pipeline Settings",
+    "FooocusInpaintSettings": "Fooocus Inpaint Settings",
 }
