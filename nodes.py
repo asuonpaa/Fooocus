@@ -180,6 +180,17 @@ def processTaskSimple(async_task, pipeline_in, positive_cond, negative_cond, see
 
     refiner_swap_method = advanced_parameters.refiner_swap_method
 
+    # TODO:
+    # Inpaint settings are:
+    # inpaint_engine = v2.6
+    # erode_or_dilate = 0
+    # inpaint_respective_field = 0.618
+    #
+    # Here we set detailer settings
+    advanced_parameters.inpaint_engine = 'None'
+    advanced_parameters.erode_or_dilate = 0
+    advanced_parameters.inpaint_respective_field = 0.0
+
     inpaint_worker.current_task = None
     inpaint_parameterized = advanced_parameters.inpaint_engine != 'None'
 #    inpaint_image = None
