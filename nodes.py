@@ -185,11 +185,13 @@ def processTaskSimple(async_task, pipeline_in, positive_cond, negative_cond, see
     # inpaint_engine = v2.6
     # erode_or_dilate = 0
     # inpaint_respective_field = 0.618
+    # inpaint_strength = 1
     #
     # Here we set detailer settings
     advanced_parameters.inpaint_engine = 'None'
     advanced_parameters.erode_or_dilate = 0
     advanced_parameters.inpaint_respective_field = 0.0
+    advanced_parameters.inpaint_strength = 0.5
 
     inpaint_worker.current_task = None
     inpaint_parameterized = advanced_parameters.inpaint_engine != 'None'
