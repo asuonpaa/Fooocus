@@ -74,6 +74,7 @@ def processTaskSimple(async_task, pipeline_in, positive_cond, negative_cond, see
     from extras.expansion import safe_str
     from modules.util import remove_empty_str, HWC3, resize_image, \
         get_image_shape_ceil, set_image_shape_ceil, get_shape_ceil, resample_image, erode_or_dilate
+    from PIL import Image, ImageFilter
 
     execution_start_time = time.perf_counter()
 
@@ -193,6 +194,11 @@ def processTaskSimple(async_task, pipeline_in, positive_cond, negative_cond, see
     advanced_parameters.erode_or_dilate = 0
     advanced_parameters.inpaint_respective_field = inpaint_settings["respective_field"]
     advanced_parameters.inpaint_strength = inpaint_settings["strength"]
+    feather = inpaint_settings["feather"]
+    # Experimental: dilate with the amount of feather to keep the mask size the same
+    # TODO: Compare to impact pack detailer node
+    #advanced_parameters.erode_or_dilate = advanced_parameters.erode_or_dilate + feather
+
 
     inpaint_worker.current_task = None
     inpaint_parameterized = advanced_parameters.inpaint_engine != 'None'
@@ -267,6 +273,14 @@ def processTaskSimple(async_task, pipeline_in, positive_cond, negative_cond, see
         if int(advanced_parameters.inpaint_erode_or_dilate) != 0:
             print(f'[Inpaint] Erode or dilate = {advanced_parameters.inpaint_erode_or_dilate}')
             inpaint_mask = erode_or_dilate(inpaint_mask, advanced_parameters.inpaint_erode_or_dilate)
+
+        # TODO: Mask feathering was not originally in Fooocus.
+        if feather > 0:
+            print(f'[Inpaint] Feathering with radius {feather}')
+            orig_shape = inpaint_mask.shape
+            pil_image = Image.fromarray(inpaint_mask)
+            blurred = pil_image.filter(ImageFilter.GaussianBlur(radius=feather))
+            inpaint_mask = np.array(blurred.getdata()).reshape(orig_shape)
 
         inpaint_image = HWC3(inpaint_image)
 
@@ -692,7 +706,9 @@ class FooocusPrompt:
         prompts = remove_empty_str([safe_str(p) for p in positive.splitlines()], default='')
         negative_prompts = remove_empty_str([safe_str(p) for p in negative.splitlines()], default='')
 
-        style_selections = ['Fooocus Photograph', 'Fooocus Negative']
+        # TODO: Disabled for now. Later make styles available through a node.
+        #style_selections = ['Fooocus Photograph', 'Fooocus Negative']
+        style_selections = []
 
         # TODO: Make an option
         use_expansion = True
@@ -820,7 +836,7 @@ class FooocusPipelineLoader:
         config.default_loras = [['None', 1.0], ['None', 1.0], ['None', 1.0], ['None', 1.0], ['None', 1.0]]
         import modules.default_pipeline as pipeline
 #        pipeline.refresh_base_model(ckpt_name)
-        inpaint_settings = {"engine": "v2.6", "respective_field": 0.618, "strength": 1.0}
+        inpaint_settings = {"engine": "v2.6", "respective_field": 0.618, "strength": 1.0, "feather": 0}
         p = { "base_model": ckpt_name, "refiner": 'None', "loras": [], "ip_tasks": [], "seed": 0, "inpaint_settings": inpaint_settings }
         # TODO
 #p["loras"] = [['SDXL_FILM_PHOTOGRAPHY_STYLE_BetaV0.4.safetensors', 0.25], ['None', 1.0], ['None', 1.0], ['None', 1.0], ['None', 1.0]]
@@ -843,13 +859,13 @@ class FooocusLoras:
             "required": {
              "pipeline_in": ("FOOOCUS_PIPELINE", ),
              "lora0": (['None'] + folder_paths.get_filename_list("fooocus_loras"), ),
-             "lora0_weight": ("FLOAT", { "default": 1.0, "min": 0.0, "max": 10.0, "step": 0.01, "round": 0.001, "display": "number"}),
+             "lora0_weight": ("FLOAT", { "default": 1.0, "min": -10.0, "max": 10.0, "step": 0.01, "round": 0.001, "display": "number"}),
              "lora1": (['None'] + folder_paths.get_filename_list("fooocus_loras"), ),
-             "lora1_weight": ("FLOAT", { "default": 1.0, "min": 0.0, "max": 10.0, "step": 0.01, "round": 0.001, "display": "number"}),
+             "lora1_weight": ("FLOAT", { "default": 1.0, "min": -10.0, "max": 10.0, "step": 0.01, "round": 0.001, "display": "number"}),
              "lora2": (['None'] + folder_paths.get_filename_list("fooocus_loras"), ),
-             "lora2_weight": ("FLOAT", { "default": 1.0, "min": 0.0, "max": 10.0, "step": 0.01, "round": 0.001, "display": "number"}),
+             "lora2_weight": ("FLOAT", { "default": 1.0, "min": -10.0, "max": 10.0, "step": 0.01, "round": 0.001, "display": "number"}),
              "lora3": (['None'] + folder_paths.get_filename_list("fooocus_loras"), ),
-             "lora3_weight": ("FLOAT", { "default": 1.0, "min": 0.0, "max": 10.0, "step": 0.01, "round": 0.001, "display": "number"}),
+             "lora3_weight": ("FLOAT", { "default": 1.0, "min": -10.0, "max": 10.0, "step": 0.01, "round": 0.001, "display": "number"}),
             },
         }
 
@@ -1069,6 +1085,7 @@ class FooocusInpaintSettings:
                 "engine": (["None", "v2.6"], ),
                 "respective_field": ("FLOAT", { "default": 0.3, "min": 0.0, "max": 1.0, "step": 0.01, "round": 0.001, "display": "number"}),
                 "strength": ("FLOAT", { "default": 0.35, "min": 0.0, "max": 1.0, "step": 0.01, "round": 0.001, "display": "number"}),
+                "feather": ("INT", {"default": 0, "min": 0, "max": 1024, "step": 1, "display": "number"}),
             },
         }
 
@@ -1081,9 +1098,9 @@ class FooocusInpaintSettings:
 
     CATEGORY = "Fooocus"
 
-    def process(self, pipeline_in, engine, respective_field, strength):
+    def process(self, pipeline_in, engine, respective_field, strength, feather):
         pipeline_out = copy.deepcopy(pipeline_in)
-        inpaint_settings = {"engine": engine, "respective_field": respective_field, "strength": strength}
+        inpaint_settings = {"engine": engine, "respective_field": respective_field, "strength": strength, "feather": feather}
         pipeline_out["inpaint_settings"] = inpaint_settings
 
         return (pipeline_out, )
