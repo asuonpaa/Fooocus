@@ -677,6 +677,9 @@ class FooocusPrompt:
                 "positive": ("STRING", {"multiline": True, "default": ""}),
                 "negative": ("STRING", {"multiline": True, "default": ""}),
             },
+            "optional": {
+                "interrogate_image": ("IMAGE",),
+            }
         }
 
     RETURN_TYPES = ("FOOOCUS_PIPELINE", )
@@ -688,20 +691,23 @@ class FooocusPrompt:
 
     CATEGORY = "Fooocus"
 
-    def process(self, pipeline_in, positive, negative):
+    def process(self, pipeline_in, positive, negative, interrogate_image = None):
         import random
         import modules.default_pipeline as pipeline
+        import numpy as np
+        import modules.core as core
 
         from modules.sdxl_styles import apply_style, apply_wildcards, fooocus_expansion
         from extras.expansion import safe_str
         from modules.util import remove_empty_str
+        from extras.interrogate import default_interrogator as default_interrogator_photo
 
         pipeline_out = copy.deepcopy(pipeline_in)
         seed = pipeline_out["seed"]
 
-        print("------------------------------------")
-        print(f"[Fooocus Prompt]: got {len(pipeline_in['loras'])} loras and {len(pipeline_in['ip_tasks'])} ip-adapter tasks")
-        print("------------------------------------")
+        #print("------------------------------------")
+        #print(f"[Fooocus Prompt]: got {len(pipeline_in['loras'])} loras and {len(pipeline_in['ip_tasks'])} ip-adapter tasks")
+        #print("------------------------------------")
 
         prompts = remove_empty_str([safe_str(p) for p in positive.splitlines()], default='')
         negative_prompts = remove_empty_str([safe_str(p) for p in negative.splitlines()], default='')
@@ -717,6 +723,17 @@ class FooocusPrompt:
 
         prompt = prompts[0]
         negative_prompt = negative_prompts[0]
+
+        if interrogate_image is not None:
+            # Add interrogated image prompt
+            img = np.asarray(core.pytorch_to_numpy(interrogate_image[0]))
+            interrogated = default_interrogator_photo(img)
+            if prompt == '':
+                prompt = interrogated
+            else:
+                prompt = prompt + ", " + interrogated
+            print(f'[Fooocus Prompt] Interrogation result: {interrogated}')
+
 
         if prompt == '':
             # disable expansion when empty since it is not meaningful and influences image prompt

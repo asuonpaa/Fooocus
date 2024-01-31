@@ -55,7 +55,7 @@ class Interrogator:
             transforms.Normalize((0.48145466, 0.4578275, 0.40821073), (0.26862954, 0.26130258, 0.27577711))
         ])(img_rgb).unsqueeze(0).to(device=self.load_device, dtype=self.dtype)
 
-        caption = self.blip_model.model.generate(gpu_image, sample=True, num_beams=1, max_length=75)[0]
+        caption = self.blip_model.model.generate(gpu_image, sample=False, num_beams=1, max_length=75)[0]
 
         return caption
 
