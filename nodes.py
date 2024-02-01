@@ -295,7 +295,7 @@ def processTaskSimple(async_task, pipeline_in, positive_cond, negative_cond, see
                 print(f'[Inpaint] Current inpaint model is {inpaint_patch_model_path}')
                 if refiner_model_name == 'None':
                     use_synthetic_refiner = True
-                    refiner_switch = 0.5
+                    refiner_switch = inpaint_settings["refiner_swap"]
             else:
                 inpaint_head_model_path, inpaint_patch_model_path = None, None
                 print(f'[Inpaint] Parameterized inpaint is disabled.')
@@ -676,6 +676,7 @@ class FooocusPrompt:
                 "pipeline_in": ("FOOOCUS_PIPELINE", ),
                 "positive": ("STRING", {"multiline": True, "default": ""}),
                 "negative": ("STRING", {"multiline": True, "default": ""}),
+                "search_replace": ("STRING", {"multiline": True, "default": ""}),
             },
             "optional": {
                 "interrogate_image": ("IMAGE",),
@@ -691,7 +692,7 @@ class FooocusPrompt:
 
     CATEGORY = "Fooocus"
 
-    def process(self, pipeline_in, positive, negative, interrogate_image = None):
+    def process(self, pipeline_in, positive, negative, search_replace, interrogate_image = None):
         import random
         import modules.default_pipeline as pipeline
         import numpy as np
@@ -738,6 +739,13 @@ class FooocusPrompt:
         if prompt == '':
             # disable expansion when empty since it is not meaningful and influences image prompt
             use_expansion = False
+
+        for line in search_replace.splitlines():
+            s = line.split('/')
+            if len(s) == 2:
+                prompt = prompt.replace(s[0], s[1])
+            else:
+                print(f'[Fooocus Prompt] unexpected search/replace line: {s}')
 
         extra_positive_prompts = prompts[1:] if len(prompts) > 1 else []
         extra_negative_prompts = negative_prompts[1:] if len(negative_prompts) > 1 else []
@@ -853,7 +861,7 @@ class FooocusPipelineLoader:
         config.default_loras = [['None', 1.0], ['None', 1.0], ['None', 1.0], ['None', 1.0], ['None', 1.0]]
         import modules.default_pipeline as pipeline
 #        pipeline.refresh_base_model(ckpt_name)
-        inpaint_settings = {"engine": "v2.6", "respective_field": 0.618, "strength": 1.0, "feather": 0}
+        inpaint_settings = {"engine": "v2.6", "respective_field": 0.618, "strength": 1.0, "feather": 0, "refiner_swap": 0.5}
         p = { "base_model": ckpt_name, "refiner": 'None', "loras": [], "ip_tasks": [], "seed": 0, "inpaint_settings": inpaint_settings }
         # TODO
 #p["loras"] = [['SDXL_FILM_PHOTOGRAPHY_STYLE_BetaV0.4.safetensors', 0.25], ['None', 1.0], ['None', 1.0], ['None', 1.0], ['None', 1.0]]
@@ -1103,6 +1111,7 @@ class FooocusInpaintSettings:
                 "respective_field": ("FLOAT", { "default": 0.3, "min": 0.0, "max": 1.0, "step": 0.01, "round": 0.001, "display": "number"}),
                 "strength": ("FLOAT", { "default": 0.35, "min": 0.0, "max": 1.0, "step": 0.01, "round": 0.001, "display": "number"}),
                 "feather": ("INT", {"default": 0, "min": 0, "max": 1024, "step": 1, "display": "number"}),
+                "refiner_swap": ("FLOAT", { "default": 0.5, "min": 0.0, "max": 1.0, "step": 0.01, "round": 0.001, "display": "number"}),
             },
         }
 
@@ -1115,9 +1124,9 @@ class FooocusInpaintSettings:
 
     CATEGORY = "Fooocus"
 
-    def process(self, pipeline_in, engine, respective_field, strength, feather):
+    def process(self, pipeline_in, engine, respective_field, strength, feather, refiner_swap):
         pipeline_out = copy.deepcopy(pipeline_in)
-        inpaint_settings = {"engine": engine, "respective_field": respective_field, "strength": strength, "feather": feather}
+        inpaint_settings = {"engine": engine, "respective_field": respective_field, "strength": strength, "feather": feather, "refiner_swap": refiner_swap}
         pipeline_out["inpaint_settings"] = inpaint_settings
 
         return (pipeline_out, )
