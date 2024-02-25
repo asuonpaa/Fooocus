@@ -45,7 +45,7 @@ def preprocess_dwpose(image):
 def progressbar(async_task, number, text):
     print(f'[Fooocus] {text}')
 
-def processTaskSimple(async_task, pipeline_in, positive_cond, negative_cond, seed, input_image, inpaint_mask_in):
+def processTaskSimple(async_task, pipeline_in, steps, positive_cond, negative_cond, seed, input_image, inpaint_mask_in):
     # TODO Remove unused
     import os
     import traceback
@@ -127,33 +127,33 @@ def processTaskSimple(async_task, pipeline_in, positive_cond, negative_cond, see
 
     assert performance_selection in ['Speed', 'Quality', 'Extreme Speed']
 
-    steps = 30
+#    steps = 30
+#
+#    if performance_selection == 'Speed':
+#        steps = 30
+#
+#    if performance_selection == 'Quality':
+#        steps = 60
 
-    if performance_selection == 'Speed':
-        steps = 30
-
-    if performance_selection == 'Quality':
-        steps = 60
-
-    if performance_selection == 'Extreme Speed':
-        print('Enter LCM mode.')
-        progressbar(async_task, 1, 'Downloading LCM components ...')
-        loras += [(modules.config.downloading_sdxl_lcm_lora(), 1.0)]
-
-        if refiner_model_name != 'None':
-            print(f'Refiner disabled in LCM mode.')
-
-        refiner_model_name = 'None'
-        sampler_name = advanced_parameters.sampler_name = 'lcm'
-        scheduler_name = advanced_parameters.scheduler_name = 'lcm'
-        modules.patch.sharpness = sharpness = 0.0
-        cfg_scale = guidance_scale = 1.0
-        modules.patch.adaptive_cfg = advanced_parameters.adaptive_cfg = 1.0
-        refiner_switch = 1.0
-        modules.patch.positive_adm_scale = advanced_parameters.adm_scaler_positive = 1.0
-        modules.patch.negative_adm_scale = advanced_parameters.adm_scaler_negative = 1.0
-        modules.patch.adm_scaler_end = advanced_parameters.adm_scaler_end = 0.0
-        steps = 8
+#    if performance_selection == 'Extreme Speed':
+#        print('Enter LCM mode.')
+#        progressbar(async_task, 1, 'Downloading LCM components ...')
+#        loras += [(modules.config.downloading_sdxl_lcm_lora(), 1.0)]
+#
+#        if refiner_model_name != 'None':
+#            print(f'Refiner disabled in LCM mode.')
+#
+#        refiner_model_name = 'None'
+#        sampler_name = advanced_parameters.sampler_name = 'lcm'
+#        scheduler_name = advanced_parameters.scheduler_name = 'lcm'
+#        modules.patch.sharpness = sharpness = 0.0
+#        cfg_scale = guidance_scale = 1.0
+#        modules.patch.adaptive_cfg = advanced_parameters.adaptive_cfg = 1.0
+#        refiner_switch = 1.0
+#        modules.patch.positive_adm_scale = advanced_parameters.adm_scaler_positive = 1.0
+#        modules.patch.negative_adm_scale = advanced_parameters.adm_scaler_negative = 1.0
+#        modules.patch.adm_scaler_end = advanced_parameters.adm_scaler_end = 0.0
+#        steps = 8
 
     modules.patch.adaptive_cfg = advanced_parameters.adaptive_cfg
     print(f'[Parameters] Adaptive CFG = {modules.patch.adaptive_cfg}')
@@ -616,6 +616,10 @@ class FooocusWrapper:
         return {
             "required": {
                 "pipeline_in": ("FOOOCUS_PIPELINE", ),
+                "steps": ("INT", {"default": 30, "min": 1, "max": 64, "step": 1, "display": "number"}),
+                "cfg": ("FLOAT", { "default": 3.0, "min": 1.0, "max": 12.0, "step": 0.01, "round": 0.001, "display": "number"}),
+                "sampler_name": (["euler", "euler_ancestral", "heun", "heunpp2", "dpm_2", "dpm_2_ancestral", "lms", "dpm_fast", "dpm_adaptive", "dpmpp_2s_ancestral", "dpmpp_sde", "dpmpp_sde_gpu", "dpmpp_2m", "dpmpp_2m_sde", "dpmpp_2m_sde_gpu", "dpmpp_3m_sde", "dpmpp_3m_sde_gpu", "ddpm", "lcm", "ddim", "uni_pc", "uni_pc_bh2"], {"default": "dpmpp_2m_sde_gpu"}),
+                "scheduler": (["normal", "karras", "exponential", "sgm_uniform", "simple", "ddim_uniform"], {"default": "karras"}),
             },
             "optional": {
                 "input_image": ("IMAGE",),
@@ -632,11 +636,14 @@ class FooocusWrapper:
 
     CATEGORY = "Fooocus"
 
-    def process(self, pipeline_in, input_image = None, inpaint_masks = []):
+    def process(self, pipeline_in, steps, cfg, sampler_name, scheduler, input_image = None, inpaint_masks = []):
         import modules.advanced_parameters as advanced_parameters
 
 #        adv_args = (False, 1.5, 0.8, 0.3, 7, 'dpmpp_2m_sde_gpu', 'karras', False, -1, -1, -1, -1, -1, -1, False, False, False, False, 0.25, 64, 128, 'joint', False, 1.01, 1.02, 0.99, 0.95, False, False, 'v2.6', 1, 0.618, False, False, 0)
 #        advanced_parameters.set_all_advanced_parameters(*adv_args)
+        advanced_parameters.sampler_name = sampler_name
+        advanced_parameters.scheduler_name = scheduler
+
 
         pipeline_out = copy.deepcopy(pipeline_in)
         positive = pipeline_out["cond_pos"]
@@ -644,7 +651,7 @@ class FooocusWrapper:
         seed = pipeline_out["seed"]
 
         # TODO: Remove this
-        args = ['Speed', '896×1152', 1, 2, 3, 'None', 0.5, 'SDXL_FILM_PHOTOGRAPHY_STYLE_BetaV0.4.safetensors', 0.25, 'None', 1, 'None', 1, 'None', 1, 'None', 1, 'Strong', [], None, '', None, None, 0.5, 0.6, 'ImagePrompt', None, 0.5, 0.6, 'ImagePrompt', None, 0.5, 0.6, 'ImagePrompt', None, 0.5, 0.6, 'ImagePrompt']
+        args = ['Speed', '896×1152', 1, 2, cfg, 'None', 0.5, 'SDXL_FILM_PHOTOGRAPHY_STYLE_BetaV0.4.safetensors', 0.25, 'None', 1, 'None', 1, 'None', 1, 'None', 1, 'Strong', [], None, '', None, None, 0.5, 0.6, 'ImagePrompt', None, 0.5, 0.6, 'ImagePrompt', None, 0.5, 0.6, 'ImagePrompt', None, 0.5, 0.6, 'ImagePrompt']
         task = AsyncTask(args=list(args))
         if inpaint_masks is None and input_image is not None:
             # Inpaint masks connected, but didn't receive any masks.
@@ -657,9 +664,9 @@ class FooocusWrapper:
             for mask in inpaint_masks:
                 # TODO: Remove this when getting rid of args
                 task = AsyncTask(args=list(args))
-                image = processTaskSimple(task, pipeline_in, positive, negative, seed, image, mask)
+                image = processTaskSimple(task, pipeline_in, steps, positive, negative, seed, image, mask)
         else:
-            image = processTaskSimple(task, pipeline_in, positive, negative, seed, input_image, None)
+            image = processTaskSimple(task, pipeline_in, steps, positive, negative, seed, input_image, None)
 
         return (pipeline_out, image)
 
@@ -856,6 +863,7 @@ class FooocusPipelineLoader:
         import modules.advanced_parameters as advanced_parameters
         import modules.config as config
         adv_args = (False, 1.5, 0.8, 0.3, 7, 'dpmpp_2m_sde_gpu', 'karras', False, -1, -1, -1, -1, -1, -1, False, False, False, False, 0.25, 64, 128, 'joint', False, 1.01, 1.02, 0.99, 0.95, False, False, 'v2.6', 1, 0.618, False, False, 0)
+        #adv_args = (False, 1.5, 0.8, 0.3, 7, 'dpmpp_2m_sde_gpu', 'karras', False, -1, -1, -1, -1, -1, -1, False, False, False, False, 0.25, 64, 128, 'joint', False, 1.01, 1.02, 0.99, 0.95, False, False, 'v2.6', 1, 0.618, False, False, 0)
         advanced_parameters.set_all_advanced_parameters(*adv_args)
         config.default_base_model_name = ckpt_name
         config.default_loras = [['None', 1.0], ['None', 1.0], ['None', 1.0], ['None', 1.0], ['None', 1.0]]
