@@ -174,7 +174,9 @@ def processTaskSimple(async_task, pipeline_in, steps, positive_cond, negative_co
 
     initial_latent = None
     denoising_strength = 1.0
-    tiled = False
+    # TODO: Use when doing tile resampling?
+    #tiled = False
+    tiled = pipeline_in["tile_resampling"]
 
     width, height = aspect_ratios_selection.replace('×', ' ').split(' ')[:2]
     width, height = int(width), int(height)
@@ -334,10 +336,7 @@ def processTaskSimple(async_task, pipeline_in, steps, positive_cond, negative_co
         progressbar(async_task, 13, 'Image processing ...')
 
     if 'vary' in goals:
-        if 'subtle' in uov_method:
-            denoising_strength = 0.5
-        if 'strong' in uov_method:
-            denoising_strength = 0.85
+        denoising_strength = pipeline_in["vary_denoising_strength"]
 
 #        shape_ceil = get_image_shape_ceil(uov_input_image)
 #        if shape_ceil < 1024:
@@ -347,6 +346,9 @@ def processTaskSimple(async_task, pipeline_in, steps, positive_cond, negative_co
 #            print(f'[Vary] Image is resized because it is too big.')
 #            shape_ceil = 2048
         shape_ceil = 1024
+
+        if pipeline_in["tile_resampling"]:
+            shape_ceil = 2048
 
         uov_input_image = set_image_shape_ceil(uov_input_image, shape_ceil)
 
@@ -870,7 +872,7 @@ class FooocusPipelineLoader:
         import modules.default_pipeline as pipeline
 #        pipeline.refresh_base_model(ckpt_name)
         inpaint_settings = {"engine": "v2.6", "respective_field": 0.618, "strength": 1.0, "feather": 0, "refiner_swap": 0.5}
-        p = { "base_model": ckpt_name, "refiner": 'None', "loras": [], "ip_tasks": [], "seed": 0, "inpaint_settings": inpaint_settings }
+        p = { "base_model": ckpt_name, "refiner": 'None', "loras": [], "ip_tasks": [], "seed": 0, "inpaint_settings": inpaint_settings, "vary_denoising_strength": 0.85, "tile_resampling": False }
         # TODO
 #p["loras"] = [['SDXL_FILM_PHOTOGRAPHY_STYLE_BetaV0.4.safetensors', 0.25], ['None', 1.0], ['None', 1.0], ['None', 1.0], ['None', 1.0]]
 #        p["loras"] = [['SDXL_FILM_PHOTOGRAPHY_STYLE_BetaV0.4.safetensors', 0.25], ['None', 1.0], ['None', 1.0], ['None', 1.0], ['None', 1.0]]
@@ -938,7 +940,7 @@ class FooocusImagePrompt:
             "required": {
                 "pipeline_in": ("FOOOCUS_PIPELINE", ),
                 "image_in": ("IMAGE", ),
-                "type": (["Disabled", "ImagePrompt", "PyraCanny", "FaceSwap", "DWPose"], ),
+                "type": (["Disabled", "ImagePrompt", "PyraCanny", "FaceSwap", "DWPose", "Tile"], ),
                 "stop_at": ("FLOAT", { "default": 0.5, "min": 0.0, "max": 1.0, "step": 0.01, "round": 0.001, "display": "number"}),
                 "weight": ("FLOAT", { "default": 0.6, "min": 0.0, "max": 2.0, "step": 0.01, "round": 0.001, "display": "number"}),
                 "softness": ("FLOAT", { "default": 0.25, "min": 0.0, "max": 1.0, "step": 0.01, "round": 0.001, "display": "number"}),
@@ -1036,6 +1038,16 @@ class FooocusImagePrompt:
             pipeline.refresh_controlnets([controlnet_openpose_path])
             pipeline_out["cond_pos"], pipeline_out["cond_neg"] = core.apply_controlnet(pipeline_in["cond_pos"], pipeline_in["cond_neg"], pipeline.loaded_ControlNets[controlnet_openpose_path], image, weight, 0, stop_at)
             image_out = image
+        elif type == "Tile":
+            shape_ceil = 2048
+            image = set_image_shape_ceil(image, shape_ceil)
+            image = core.numpy_to_pytorch(image)
+            controlnet_tile_path = os.path.join(modules.config.path_controlnet, 'ttplanetSDXLControlnet_v10F16.safetensors')
+            pipeline.refresh_controlnets([controlnet_tile_path])
+            pipeline_out["cond_pos"], pipeline_out["cond_neg"] = core.apply_controlnet(pipeline_in["cond_pos"], pipeline_in["cond_neg"], pipeline.loaded_ControlNets[controlnet_tile_path], image, weight, 0, stop_at)
+            pipeline_out["vary_denoising_strength"] = 0.35
+            pipeline_out["tile_resampling"] = True
+            image_out = image_in
 
 
 # TODO: How to resize canny and DWPose correctly?
